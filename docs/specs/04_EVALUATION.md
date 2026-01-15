@@ -165,14 +165,25 @@ def compute_all_metrics(
 
 ## Handling Class Imbalance
 
-### The Problem
+### The Problem (CORRECTED)
 
 | Class | Count | Percentage |
 |-------|-------|------------|
-| Healthy (0) | ~96 | 65% |
-| Allergic (1) | ~52 | 35% |
+| Healthy (0) | 454 | 58% |
+| Allergic (1) | 331 | 42% |
 
-A naive model predicting all "healthy" achieves 65% accuracy but is useless.
+**Note**: These are sample counts (785 total). At subject level: 122 healthy, 90 allergic.
+
+A naive model predicting all "healthy" achieves 58% accuracy but is useless.
+
+### Label Definition (IMPORTANT)
+
+HuggingFace `label=1` (allergic) includes **ANY** of:
+- Food allergies: milk, egg, peanut
+- Environmental allergies: dustmite, cat, dog, birch, timothy
+- High total IgE (`totalige_high`)
+
+**This is broader than just "food allergy"!**
 
 ### Solution 1: Balanced Class Weights
 
@@ -225,30 +236,65 @@ def find_optimal_threshold(
 
 ---
 
-## Per-Month Analysis
+## Per-Age-Bin Analysis
+
+**⚠️ IMPORTANT**: HuggingFace `Month_N` folders do NOT represent collection month!
+Use `data/processed/unified_samples.csv` with TRUE `collection_month` from RData.
 
 ### Goal
 
 Determine at which developmental stage the microbiome signal becomes predictive.
 
+### Age Bins
+
+| Age Bin | Collection Months | Samples | Description |
+|---------|-------------------|---------|-------------|
+| 0-3 | 1-3 | 45 | Very early (high clinical value) |
+| 4-6 | 4-6 | 65 | Introduction of solids |
+| 7-12 | 7-12 | 197 | First year |
+| 13-24 | 13-24 | 381 | Most samples |
+| 25+ | 25-38 | 97 | Toddler |
+
 ### Approach
 
 ```python
-def evaluate_all_months(
-    datasets: dict[int, MonthDataset],
+def evaluate_by_age_bin(
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: np.ndarray,
+    samples_df: pd.DataFrame,
     n_splits: int = 5,
     random_state: int = 42,
 ) -> pd.DataFrame:
-    """Evaluate model on each month independently."""
+    """Evaluate model on each age bin independently."""
+
+    def get_age_bin(month):
+        if month <= 3: return "0-3"
+        elif month <= 6: return "4-6"
+        elif month <= 12: return "7-12"
+        elif month <= 24: return "13-24"
+        else: return "25+"
+
+    samples_df = samples_df.copy()
+    samples_df['age_bin'] = samples_df['collection_month'].apply(get_age_bin)
+
     results = []
 
-    for month, ds in sorted(datasets.items()):
-        cv = create_cv_splitter(n_splits, random_state)
+    for age_bin in ["0-3", "4-6", "7-12", "13-24", "25+"]:
+        mask = samples_df['age_bin'] == age_bin
+        if mask.sum() < 10:  # Skip if too few samples
+            continue
+
+        X_bin = X[mask]
+        y_bin = y[mask]
+        groups_bin = groups[mask]
+
+        cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
         fold_metrics = []
 
-        for train_idx, test_idx in cv.split(ds.X, ds.y, groups=np.array(ds.subject_ids)):
-            X_train, X_test = ds.X[train_idx], ds.X[test_idx]
-            y_train, y_test = ds.y[train_idx], ds.y[test_idx]
+        for train_idx, test_idx in cv.split(X_bin, y_bin, groups=groups_bin):
+            X_train, X_test = X_bin[train_idx], X_bin[test_idx]
+            y_train, y_test = y_bin[train_idx], y_bin[test_idx]
 
             model = create_model()
             model.fit(X_train, y_train)
@@ -256,12 +302,11 @@ def evaluate_all_months(
 
             fold_metrics.append(compute_all_metrics(y_test, y_prob))
 
-        # Aggregate across folds
         results.append({
-            "month": month,
-            "n_samples": len(ds.y),
-            "n_subjects": len(set(ds.subject_ids)),
-            "n_allergic": int(ds.y.sum()),
+            "age_bin": age_bin,
+            "n_samples": mask.sum(),
+            "n_subjects": len(set(groups_bin)),
+            "n_allergic": int(y_bin.sum()),
             "auroc_mean": np.mean([m.auroc for m in fold_metrics]),
             "auroc_std": np.std([m.auroc for m in fold_metrics]),
             "f1_mean": np.mean([m.f1 for m in fold_metrics]),
@@ -274,12 +319,13 @@ def evaluate_all_months(
 ### Expected Output
 
 ```
-Month | Samples | Subjects | Allergic | AUROC (mean±std) | F1 (mean±std)
-------|---------|----------|----------|------------------|---------------
-1     | 45      | 40       | 15       | 0.52 ± 0.08      | 0.35 ± 0.10
-3     | 62      | 55       | 20       | 0.58 ± 0.07      | 0.42 ± 0.09
-6     | 78      | 68       | 25       | 0.63 ± 0.06      | 0.48 ± 0.08
-12    | 85      | 75       | 28       | 0.71 ± 0.05      | 0.55 ± 0.07
+Age Bin | Samples | Subjects | Allergic | AUROC (mean±std) | F1 (mean±std)
+--------|---------|----------|----------|------------------|---------------
+0-3     | 45      | ~40      | ~19      | 0.52 ± 0.08      | 0.35 ± 0.10
+4-6     | 65      | ~55      | ~27      | 0.58 ± 0.07      | 0.42 ± 0.09
+7-12    | 197     | ~100     | ~80      | 0.63 ± 0.06      | 0.48 ± 0.08
+13-24   | 381     | ~180     | ~160     | 0.65 ± 0.05      | 0.50 ± 0.07
+25+     | 97      | ~80      | ~40      | 0.60 ± 0.07      | 0.45 ± 0.09
 ```
 
 ---

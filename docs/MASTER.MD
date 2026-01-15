@@ -2,19 +2,36 @@
 
 ## Executive Summary
 
-A binary classifier that predicts food allergy development in infants using gut microbiome embeddings from the DIABIMMUNE three-country cohort.
+A binary classifier that predicts allergy development in infants using gut microbiome embeddings from the DIABIMMUNE three-country cohort.
 
 | Component | Description |
 |-----------|-------------|
-| **Input** | Pre-computed 100-dimensional microbiome embeddings (one per stool sample) |
-| **Output** | Binary prediction (0 = healthy, 1 = allergic) |
-| **Evaluation** | Per-month AUROC, F1, confusion matrices with proper subject-level splits |
+| **Input** | Pre-computed 100-dimensional microbiome embeddings (one per WGS sample) |
+| **Output** | Binary prediction (0 = healthy, 1 = any allergy or high total IgE) |
+| **Evaluation** | Per-age-bin AUROC, F1, confusion matrices with proper subject-level splits |
+
+---
+
+## Critical Corrections (2026-01-15)
+
+After first-principles data validation, several critical issues were found:
+
+| Issue | Original Assumption | Reality |
+|-------|---------------------|---------|
+| **Label definition** | Food allergy only (milk/egg/peanut) | ANY allergy + totalige_high |
+| **HuggingFace Month_N** | Collection month | **Duplicated data** - same samples in multiple folders |
+| **Sample count** | ~658 (16S-based) | 785 (WGS-based) |
+| **Subject count** | ~148 | 212 |
+| **Class balance** | 35% allergic / 65% healthy | **42% allergic / 58% healthy** |
+| **ID mapping column** | `host_subject_id` | `gid_wgs` → `subjectID` |
+
+**See `data/README.md` for complete provenance and validation.**
 
 ---
 
 ## Why This Matters
 
-Gut microbiome composition in early life predicts food allergy development **months before clinical symptoms**. The signal exists—we just need to detect it properly without methodological leakage.
+Gut microbiome composition in early life predicts allergy development **months before clinical symptoms**. The signal exists—we just need to detect it properly without methodological leakage.
 
 Key scientific findings:
 - Allergic children exhibit **reduced microbial diversity**
@@ -50,37 +67,34 @@ The **Three-Country Cohort** studies the **hygiene hypothesis**—why autoimmune
 | **16S rRNA amplicon** | 1,584 | V4 region, paired-end |
 | **Whole-genome shotgun (WGS)** | 785 | Full metagenome |
 
-### Allergy Labels
+**⚠️ HuggingFace embeddings are from WGS samples (785), not 16S (1,584)!**
 
-Food allergy status determined by **IgE measurements** for:
-- **Milk**
-- **Egg**
-- **Peanut**
+### Label Definition (CORRECTED)
 
-Subject is labeled **allergic (1)** if positive for any of these three allergens.
+HuggingFace `label=1` (allergic) means **ANY of the following is True**:
 
-### Published Dataset Numbers
+| Allergy Type | Column in RData |
+|--------------|-----------------|
+| Food: Milk | `allergy_milk` |
+| Food: Egg | `allergy_egg` |
+| Food: Peanut | `allergy_peanut` |
+| Environmental: Dust mite | `allergy_dustmite` |
+| Environmental: Cat | `allergy_cat` |
+| Environmental: Dog | `allergy_dog` |
+| Environmental: Birch | `allergy_birch` |
+| Environmental: Timothy grass | `allergy_timothy` |
+| **High total IgE** | `totalige_high` |
 
-From [Metwally et al. 2019](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1006693):
+**This is broader than "food allergy" - it includes environmental allergies and elevated IgE!**
+
+### Dataset Numbers (CORRECTED)
 
 | Category | Count |
 |----------|-------|
-| Total subjects after filtering | **148** |
-| Food-allergic subjects | **52** (35%) |
-| Non-allergic subjects | **96** (65%) |
-| Total samples | **658** |
-
-> **Note**: Original 195 subjects → 148 after excluding those with <3 timepoints
-
-### Citation
-
-```
-Vatanen T, Kostic A, d'Hennezel E, et al.
-Variation in Microbiome LPS Immunogenicity Contributes to Autoimmunity in Humans.
-Cell. 2016 Apr 28. DOI: 10.1016/j.cell.2016.04.007
-```
-
-**BioProject ID**: [PRJNA290380](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA290380)
+| Unique WGS samples in HuggingFace | **785** |
+| Unique subjects with WGS | **212** |
+| Allergic subjects (label=1) | **90** (42%) |
+| Healthy subjects (label=0) | **122** (58%) |
 
 ---
 
@@ -111,118 +125,38 @@ The embeddings come from [Matteo's Microbiome World Model](https://the-puzzler.g
 
 Available on HuggingFace: **[hugging-science/AI4FA-Diabimmune](https://huggingface.co/datasets/hugging-science/AI4FA-Diabimmune)**
 
-```
-AI4FA-Diabimmune/
-├── metadata/                      # Month_1.csv, Month_2.csv, etc.
-│   └── Month_{1,2,3,...38}.csv   # Contains: sid, label
-├── processed/
-│   ├── dna_embeddings/           # 384-dim ProkBERT embeddings per OTU
-│   │   └── month_{1,2,...}/dna_embeddings.h5
-│   ├── dna_sequences/            # Raw DNA sequences per sample
-│   │   └── month_{1,2,...}/*.csv
-│   └── microbiome_embeddings/    # 100-dim aggregated embeddings ← USE THESE
-│       └── month_{1,2,...}/microbiome_embeddings.h5
-└── README.md
-```
+**⚠️ CRITICAL WARNING: HuggingFace Month_N Structure**
 
-> **Warning**: Dataset is marked experimental, structure frozen for ongoing research.
+```
+The Month_N folders do NOT represent collection month!
+
+Evidence:
+- Sample SRS1719502 appears in: Month_1, Month_4, Month_7, Month_10, Month_13, Month_16, Month_19, Month_22, Month_28, Month_36
+- Embeddings are IDENTICAL across these folders
+- Same 785 samples are duplicated across folders
+
+For proper analysis, use:
+  data/processed/unified_samples.csv
+Which contains the TRUE collection_month from RData.
+```
 
 ---
 
-## The Critical Problem
+## ID Mapping Chain
 
-### What's Missing
-
-The existing `Month_*.csv` files only have:
-
-```csv
-sid,label
-SRS1719091,0
-SRS1719092,1
-```
-
-**Missing columns**:
-- `subject_id` (which infant)
-- `country` (FIN/EST/RUS)
-
-### Why This Is Fatal
-
-Without `subject_id`:
-1. Cannot do `GroupKFold` → samples from same infant leak into train+test
-2. **Inflated metrics** → model memorizes infant-specific patterns
-3. **Not publishable** → methodologically unsound
+HuggingFace sample IDs need to be mapped to subject IDs through a chain:
 
 ```
-❌ Random split (WRONG):
-   Train: [SRS001_month1, SRS001_month3, SRS002_month1]  ← Same infant in both!
-   Test:  [SRS001_month2, SRS002_month2]
-
-✅ Subject-level split (CORRECT):
-   Train: [All samples from infant_001, infant_002]
-   Test:  [All samples from infant_003, infant_004]
+SRS1719091 (HuggingFace sid)
+    │
+    └── via SRA runinfo (Sample → LibraryName)
+        │
+        └── G78508 (gid_wgs in RData)
+            │
+            └── T012374 (subjectID in RData)
 ```
 
-### Class Imbalance
-
-| Class | Count | Percentage |
-|-------|-------|------------|
-| Healthy (0) | 96 | 65% |
-| Allergic (1) | 52 | 35% |
-
-Must use `class_weight='balanced'` or stratified sampling.
-
----
-
-## Solution: Get Subject IDs
-
-### Option A: Use Local RData File (Recommended)
-
-You have: `DIABIMMUNE_Karelia_metadata.RData` (687KB)
-
-This file contains the **full subject metadata** including:
-- `host_subject_id` (e.g., "T012374")
-- Country
-- Age at collection
-- Allergy status
-- Diet info
-- And more...
-
-**Extraction approach**:
-```python
-import pyreadr
-
-# Load RData file
-result = pyreadr.read_r('DIABIMMUNE_Karelia_metadata.RData')
-
-# Get the dataframe (check keys for exact name)
-metadata_df = result[list(result.keys())[0]]
-
-# Map SRS → subject_id
-# You'll need to join on sample accession
-```
-
-### Option B: Query ENA/NCBI API
-
-```python
-# Using ffq tool
-# pip install ffq
-import subprocess
-import json
-
-srs_id = "SRS1719091"
-result = subprocess.run(["ffq", srs_id], capture_output=True, text=True)
-metadata = json.loads(result.stdout)
-subject_id = metadata.get("host_subject_id")
-```
-
-Or use ENA Portal API:
-```
-https://www.ebi.ac.uk/ena/portal/api/search?query=sample_accession="SRS1719091"&result=sample&fields=host_subject_id
-```
-
-### Option C: Download from DIABIMMUNE Website
-
-Subject metadata available at: [diabimmune.broadinstitute.org](https://diabimmune.broadinstitute.org/diabimmune/three-country-cohort/resources/subject-metadata)
+**The mapping file is: `data/processed/srs_to_subject_mapping.csv`**
 
 ---
 
@@ -247,6 +181,18 @@ for fold, (train_idx, test_idx) in enumerate(cv.split(X, y, groups=subject_ids))
     # Train and evaluate
 ```
 
+### Why Subject-Level Splits Are Critical
+
+```
+❌ Random split (WRONG):
+   Train: [SRS001_month1, SRS001_month3, SRS002_month1]  ← Same infant in both!
+   Test:  [SRS001_month2, SRS002_month2]
+
+✅ Subject-level split (CORRECT):
+   Train: [All samples from infant_001, infant_002]
+   Test:  [All samples from infant_003, infant_004]
+```
+
 ### Metrics
 
 | Metric | Purpose |
@@ -259,12 +205,17 @@ for fold, (train_idx, test_idx) in enumerate(cv.split(X, y, groups=subject_ids))
 
 ### Analysis Goal
 
-**At which month does the signal become predictive?**
+**At which age does the signal become predictive?**
 
-- Month 1? (Very early, high clinical value)
-- Month 3?
-- Month 12?
-- Month 36? (Too late for intervention)
+Collection months are binned for analysis:
+
+| Age Bin | Samples | Notes |
+|---------|---------|-------|
+| 0-3 months | 45 | Very early (high clinical value) |
+| 4-6 months | 65 | Introduction of solids |
+| 7-12 months | 197 | First year |
+| 13-24 months | 381 | Most samples here |
+| 25+ months | 97 | Toddler |
 
 ---
 
@@ -314,13 +265,17 @@ diabimmune/
 │   └── specs/                    # Detailed implementation specs
 ├── notebooks/
 │   └── 01_baseline_classifier.ipynb
-├── src/                          # Optional: reusable code
-│   └── ...
-├── data/                         # Downloaded from HuggingFace (gitignored)
-│   └── ...
+├── data/                         # COMMITTED (small enough)
+│   ├── README.md                 # Provenance documentation
+│   ├── raw/
+│   │   ├── huggingface/          # Downloaded from HF (6.9 MB)
+│   │   └── sra_runinfo.csv       # SRA metadata
+│   └── processed/
+│       ├── srs_to_subject_mapping.csv  # ID mapping
+│       └── unified_samples.csv         # PRIMARY DATASET
 ├── results/                      # Evaluation outputs (gitignored)
 │   └── ...
-├── DIABIMMUNE_Karelia_metadata.RData  # Subject metadata
+├── DIABIMMUNE_Karelia_metadata.RData  # Subject metadata (687 KB)
 ├── pyproject.toml                # Dependencies (uv)
 ├── .gitignore
 ├── LICENSE
@@ -333,11 +288,11 @@ diabimmune/
 
 | Step | Task | Status |
 |------|------|--------|
-| 1 | **Download embeddings** | HuggingFace (~5 min) |
-| 2 | **Extract subject_ids** | From RData file (**blocker solved**) |
-| 3 | **Create proper metadata** | `sid`, `label`, `subject_id`, `country` |
+| 1 | **Download embeddings** | ✅ Done (in `data/raw/huggingface/`) |
+| 2 | **Extract subject_ids** | ✅ Done (in `data/processed/`) |
+| 3 | **Create proper metadata** | ✅ Done (`unified_samples.csv`) |
 | 4 | **Run evaluation** | `StratifiedGroupKFold` + LogReg |
-| 5 | **Visualize** | AUROC per month, confusion matrices |
+| 5 | **Visualize** | AUROC per age bin, confusion matrices |
 | 6 | **Document** | What worked, limitations |
 
 ---
@@ -346,12 +301,50 @@ diabimmune/
 
 | Issue | Impact | Mitigation |
 |-------|--------|------------|
-| Missing `subject_id` in HF CSVs | Data leakage | Extract from RData |
-| Class imbalance (35/65) | Biased predictions | `class_weight='balanced'` |
+| **HuggingFace Month_N ≠ collection month** | Wrong analysis | Use `unified_samples.csv` |
+| **Label includes environmental allergies** | Broader than "food allergy" | Document clearly |
+| Missing `subject_id` in HF CSVs | Data leakage | Use mapping file |
+| Class imbalance (42/58) | Biased predictions | `class_weight='balanced'` |
 | Variable samples per subject | Uneven representation | Subject-level CV |
-| Inconsistent CSV schemas in HF | Loader errors | Handle separately |
-| Month 38 has very few samples | Unreliable metrics | May need to exclude |
-| Some subjects have <3 timepoints | Noise | Consider filtering |
+| Month 38 has only 4 samples | Unreliable metrics | Exclude from analysis |
+| Some subjects have only 1 sample | Limited data | Still include |
+
+---
+
+## Data Files Summary
+
+| File | Rows | Description |
+|------|------|-------------|
+| `data/processed/unified_samples.csv` | 785 | Primary dataset |
+| `data/processed/srs_to_subject_mapping.csv` | 785 | ID mapping |
+| `data/raw/huggingface/metadata/Month_*.csv` | varies | HF labels (ignore Month_N structure) |
+| `data/raw/huggingface/processed/microbiome_embeddings/*/microbiome_embeddings.h5` | varies | 100-dim embeddings |
+| `data/raw/sra_runinfo.csv` | 785 | SRA metadata for ID mapping |
+| `DIABIMMUNE_Karelia_metadata.RData` | 1,946 | Full subject metadata |
+
+---
+
+## Loading Data (Example)
+
+```python
+import pandas as pd
+import h5py
+import numpy as np
+from pathlib import Path
+
+# Load unified samples with TRUE collection months
+samples = pd.read_csv("data/processed/unified_samples.csv")
+
+# Load embeddings (use any Month_N - they're all the same)
+embed_path = Path("data/raw/huggingface/processed/microbiome_embeddings/Month_1/microbiome_embeddings.h5")
+with h5py.File(embed_path, 'r') as f:
+    embeddings = {srs: np.array(f[srs]) for srs in f.keys()}
+
+# Build feature matrix
+X = np.array([embeddings[srs] for srs in samples['srs_id']])
+y = samples['label'].values
+groups = samples['subject_id'].values
+```
 
 ---
 
