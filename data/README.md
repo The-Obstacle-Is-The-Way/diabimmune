@@ -11,16 +11,25 @@ data/
 │   ├── diabimmune_karelia_16s_data.rdata  # Taxonomy-collapsed abundances (1,584 × 282)
 │   └── sra_runinfo.csv                    # SRS → gid_wgs mapping (785 rows, HF/WGS-keyed subset only)
 └── processed/
-    ├── 16s/                               # Primary (food allergy, full 16S cohort)
-    │   ├── samples_food_allergy.csv       # 1,450 labeled 16S samples (203 subjects)
-    │   ├── otus_greengenes_ids.csv        # 2,005 Greengenes OTU IDs + taxonomy strings
-    │   ├── otu_counts.npz                 # (1450, 2005) OTU count matrix aligned to samples_food_allergy.csv
-    │   └── dataset_manifest.json          # Provenance + checksums + counts
-    └── hf_legacy/                         # Legacy baseline (HuggingFace embeddings subset)
-        ├── unified_samples.csv            # 785 samples only (WGS-keyed subset)
-        ├── srs_to_subject_mapping.csv     # ID mapping for HF subset
-        ├── microbiome_embeddings_100d.h5  # Pre-computed embeddings (785 keys)
-        └── dataset_manifest.json          # Provenance for HF legacy files
+    └── 16s/                               # Primary (food allergy, full 16S cohort)
+        ├── samples_food_allergy.csv       # 1,450 labeled 16S samples (203 subjects)
+        ├── otus_greengenes_ids.csv        # 2,005 Greengenes OTU IDs + taxonomy strings
+        ├── otu_counts.npz                 # (1450, 2005) OTU count matrix aligned to samples_food_allergy.csv
+        └── dataset_manifest.json          # Provenance + checksums + counts
+
+# Reference data (in _reference/, not tracked in git):
+_reference/
+├── greengenes/gg_13_8_otus/               # Greengenes 13_8 reference (305MB tar.gz)
+│   ├── rep_set/97_otus.fasta              # 99,322 OTUs at 97% clustering
+│   ├── rep_set/99_otus.fasta              # Higher resolution clustering
+│   └── taxonomy/97_otu_taxonomy.txt       # Taxonomy mapping
+├── hf_legacy/                             # Legacy HuggingFace data (deprecated)
+│   ├── unified_samples.csv                # 785 samples only (WGS-keyed subset)
+│   ├── microbiome_embeddings_100d.h5      # Pre-computed embeddings (unknown provenance)
+│   └── dataset_manifest.json              # Provenance notes
+└── Microbiome-Modelling/                  # Matteo's aggregation model code
+    ├── model.py                           # MicrobiomeTransformer architecture
+    └── main.py                            # Training configuration
 ```
 
 ---
@@ -135,5 +144,28 @@ label = any(allergy_*) | totalige_high
 1. **Greengenes tarball integrity**: do not assume a local copy is valid; always verify with `gzip -t` before extracting.
 2. **Outcome missingness**: 18 subjects have food-allergy columns entirely missing; exclude them (1450 labeled 16S samples remain).
 3. **Country confounding**: Food-allergy prevalence differs strongly by country; always include leave-one-country-out evaluation.
+
+---
+
+## OTU-to-Greengenes Matching (Verified 2026-01-15)
+
+| Clustering | OTUs Matched | Match Rate |
+|------------|--------------|------------|
+| 97% | 1,356 / 2,005 | 68% |
+| 99% | 1,783 / 2,005 | 89% |
+| Combined (either) | 1,783 / 2,005 | 89% |
+| Unmatched | 222 / 2,005 | 11% |
+
+**Note**: The 222 unmatched OTUs may be de novo assignments or version mismatches. Use 99% clustering for maximum coverage.
+
+---
+
+## Key Paper References
+
+| Model | Paper | Embedding Dim |
+|-------|-------|---------------|
+| **ProkBERT** | Ligeti et al., Frontiers Microbiol 2024 ([PMID:38282738](https://pubmed.ncbi.nlm.nih.gov/38282738/)) | 384 |
+| **Set Transformer (abundance-aware)** | Yoo & Rosen, arXiv 2508.11075 | Variable |
+| **Microbiome LM** | PLOS Comp Bio, May 2025 ([link](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011353)) | Variable |
 
 See `docs/data/FULL_PIPELINE_PLAN.md` for complete pipeline documentation.
