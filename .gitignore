@@ -211,3 +211,4 @@ data/raw/huggingface_snapshot/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+_reference/

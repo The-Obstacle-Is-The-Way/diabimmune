@@ -1,0 +1,154 @@
+# Full Pipeline Plan: From Raw Data to Embeddings
+
+**Date**: 2025-01-15
+**Status**: Data acquired, pipeline documented
+
+---
+
+## What We Have
+
+### Raw Data (in `data/raw/`)
+
+| File | Contents | Samples | Source |
+|------|----------|---------|--------|
+| `DIABIMMUNE_Karelia_metadata.RData` | Subject metadata, allergy labels | 222 subjects, 1,946 sample records | Broad Institute |
+| `diabimmune_karelia_16s_otu_table.txt` | OTU counts with Greengenes IDs | **1,584 samples × 2,005 OTUs** | Broad Institute |
+| `diabimmune_karelia_16s_data.rdata` | Taxonomy-collapsed abundances | 1,584 samples × 282 taxa | Broad Institute |
+| `sra_runinfo.csv` | SRS → gid_wgs mapping | 785 rows | NCBI SRA |
+
+### Reference Code (in `_reference/`)
+
+| File | Purpose |
+|------|---------|
+| `Microbiome-Modelling/model.py` | Matteo's MicrobiomeTransformer architecture |
+| `Microbiome-Modelling/dataloader_simplified.py` | Data loading and perturbation |
+| `Microbiome-Modelling/main.py` | Training configuration |
+| `Microbiome-Modelling/train_funcs.py` | Training loop |
+
+**Source**: https://github.com/the-puzzler/Microbiome-Modelling
+
+---
+
+## The Full Embedding Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ STEP 1: Get 16S Reference Sequences                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│ Source: Greengenes 13_8 (gg_13_8_otus.tar.gz)                      │
+│ Download: ftp://greengenes.microbio.me/greengenes_release/gg_13_5/ │
+│ Files needed:                                                       │
+│   - rep_set/97_otus.fasta (16S sequences)                          │
+│   - taxonomy/97_otu_taxonomy.txt (taxonomy mapping)                │
+│                                                                     │
+│ Extract sequences for our 2,005 OTU IDs                            │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ STEP 2: Embed OTU Sequences with ProkBERT                          │
+├─────────────────────────────────────────────────────────────────────┤
+│ Model: neuralbioinfo/prokbert-mini-long (HuggingFace)              │
+│ Input: 16S rRNA sequence (~1500bp V4 region)                       │
+│ Output: 384-dim embedding per OTU                                  │
+│ Total: 2,005 OTUs → 2,005 × 384 embedding matrix                   │
+│                                                                     │
+│ Hardware: M1 Max 64GB RAM - easily handles this                    │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ STEP 3: Aggregate to Sample-Level with MicrobiomeTransformer       │
+├─────────────────────────────────────────────────────────────────────┤
+│ Model: Matteo's MicrobiomeTransformer (_reference/)                │
+│ Input per sample:                                                  │
+│   - OTU embeddings (384-dim) for present OTUs                      │
+│   - Text embeddings (1536-dim) for metadata (optional)             │
+│ Output: 100-dim sample embedding                                   │
+│ Total: 1,584 samples → 1,584 × 100 embedding matrix                │
+│                                                                     │
+│ Note: May need to train this model or use pretrained weights       │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│ STEP 4: Train Classifier                                           │
+├─────────────────────────────────────────────────────────────────────┤
+│ Input: 100-dim sample embeddings + food allergy labels             │
+│ Model: Logistic regression or simple MLP                           │
+│ Evaluation: Subject-level GroupKFold (no leakage)                  │
+│                                                                     │
+│ Labels from RData:                                                 │
+│   - allergy_milk, allergy_egg, allergy_peanut (FOOD ALLERGIES)     │
+│   - NOT environmental allergies (dustmite, cat, etc.)              │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Key Numbers
+
+| Metric | Value |
+|--------|-------|
+| Total 16S samples | 1,584 |
+| Unique subjects | 222 |
+| Unique Greengenes OTUs | 2,005 |
+| Countries | 3 (Finland, Estonia, Russia) |
+| ProkBERT embedding dim | 384 |
+| Final sample embedding dim | 100 |
+
+---
+
+## External Resources Needed
+
+### 1. Greengenes 13_8 Reference
+- **URL**: `ftp://greengenes.microbio.me/greengenes_release/gg_13_5/gg_13_8_otus.tar.gz`
+- **Alternative**: https://greengenes.secondgenome.com/
+- **Files**: `rep_set/97_otus.fasta`, `taxonomy/97_otu_taxonomy.txt`
+
+### 2. ProkBERT Model
+- **HuggingFace**: `neuralbioinfo/prokbert-mini-long`
+- **GitHub**: https://github.com/nbrg-ppcu/prokbert
+- **Params**: ~20M (runs easily on M1 Max)
+- **Output dim**: 384
+
+### 3. MicrobiomeTransformer (Matteo's)
+- **Code**: Already in `_reference/Microbiome-Modelling/`
+- **Pretrained weights**: NOT AVAILABLE (would need to train or contact Matteo)
+- **Alternative**: Use ProkBERT embeddings directly with mean pooling
+
+---
+
+## Critical Corrections from HuggingFace Data
+
+The original HuggingFace dataset (`hugging-science/AI4FA-Diabimmune`) had issues:
+
+1. **Missing samples**: Only 785 samples (WGS subset), not full 1,584 16S samples
+2. **Wrong Month_N structure**: Folders don't represent collection month
+3. **Wrong label definition**: Includes environmental allergies, not just food allergies
+4. **No provenance**: Unclear how embeddings were generated
+
+**Our approach**: Generate embeddings from scratch with full provenance.
+
+---
+
+## Alternative: Direct Classification (No Embeddings)
+
+If embedding pipeline is too complex, can use OTU table directly:
+
+```python
+# Load OTU table (1,584 samples × 2,005 OTUs)
+# Each cell = raw count
+# Normalize to relative abundance
+# Train classifier on 2,005-dim feature vector
+```
+
+This skips ProkBERT and MicrobiomeTransformer entirely but loses the learned representations.
+
+---
+
+## Next Steps
+
+1. [ ] Download Greengenes 13_8 reference
+2. [ ] Extract 16S sequences for our 2,005 OTU IDs
+3. [ ] Run ProkBERT to generate 384-dim OTU embeddings
+4. [ ] Decide: Train MicrobiomeTransformer OR use simple pooling
+5. [ ] Create proper food-allergy-only labels from RData
+6. [ ] Train and evaluate classifier with subject-level CV
