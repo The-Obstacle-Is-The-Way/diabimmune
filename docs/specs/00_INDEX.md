@@ -34,8 +34,10 @@ After running data prep scripts:
 - `data/processed/16s/otu_counts.npz`
 - `data/processed/16s/dataset_manifest.json`
 
-**Legacy (HF embeddings subset):**
-- `data/processed/hf_legacy/unified_samples.csv`
-- `data/processed/hf_legacy/microbiome_embeddings_100d.h5`
-- `data/processed/hf_legacy/srs_to_subject_mapping.csv`
-- `data/processed/hf_legacy/dataset_manifest.json`
+**Legacy (HF embeddings subset — DEPRECATED, moved to `_reference/`):**
+- `_reference/hf_legacy/unified_samples.csv`
+- `_reference/hf_legacy/microbiome_embeddings_100d.h5`
+- `_reference/hf_legacy/srs_to_subject_mapping.csv`
+- `_reference/hf_legacy/dataset_manifest.json`
+
+Note: These files are untracked. Do not use for "food allergy only" experiments.

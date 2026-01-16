@@ -44,12 +44,14 @@ uv run pytest -q
 ```
 scripts/
   prepare_16s_dataset.py     # primary dataset prep
-  prepare_hf_legacy.py       # optional legacy HF baseline prep
 data/
   raw/                       # source data (checked into this repo)
   processed/
     16s/                     # primary processed artifacts
-    hf_legacy/               # legacy artifacts
+_reference/                  # untracked reference data
+  greengenes/                # Greengenes 13_8 (downloaded)
+  hf_legacy/                 # deprecated HuggingFace data
+  Microbiome-Modelling/      # reference model code
 docs/
   specs/                     # these files
 ```

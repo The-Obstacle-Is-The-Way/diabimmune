@@ -23,8 +23,8 @@ Trust these as ground truth:
 - `data/raw/DIABIMMUNE_Karelia_metadata.RData` (metadata + outcomes)
 - `data/raw/diabimmune_karelia_16s_otu_table.txt` (OTU counts; Greengenes IDs embedded in row labels)
 
-Treat these as **legacy / convenience only**:
-- `data/processed/hf_legacy/` (HuggingFace-derived embeddings subset)
+Treat these as **legacy / convenience only** (deprecated, untracked):
+- `_reference/hf_legacy/` (HuggingFace-derived embeddings subset; moved out of tracked data)
 
 ---
 
@@ -45,20 +45,17 @@ uv run python3 scripts/prepare_16s_dataset.py --force
 
 **Important**: 18 subjects have all food-allergy fields missing; their 16S samples are excluded (1,450 labeled samples remain).
 
-### 2) HuggingFace Embeddings Subset (Legacy)
+### 2) HuggingFace Embeddings Subset (Legacy — DEPRECATED)
 
-Prepared artifacts:
-- `data/processed/hf_legacy/unified_samples.csv`
-- `data/processed/hf_legacy/microbiome_embeddings_100d.h5`
-- `data/processed/hf_legacy/srs_to_subject_mapping.csv`
-- `data/processed/hf_legacy/dataset_manifest.json`
+**Status**: Moved to `_reference/hf_legacy/` (untracked). Do not use for "food allergy only" experiments.
 
-Rebuild:
-```bash
-uv run python3 scripts/prepare_hf_legacy.py
-```
+Legacy artifacts (if present locally):
+- `_reference/hf_legacy/unified_samples.csv`
+- `_reference/hf_legacy/microbiome_embeddings_100d.h5`
+- `_reference/hf_legacy/srs_to_subject_mapping.csv`
+- `_reference/hf_legacy/dataset_manifest.json`
 
-This subset is WGS-keyed (785 SRS IDs) and includes broken/duplicated Month_* structure upstream; we keep only a canonical exported embedding file.
+This subset is WGS-keyed (785 SRS IDs) with unknown embedding provenance. The original HuggingFace dataset has broken Month_* structure and uses a broader label definition (any allergy + high IgE).
 
 ---
 
@@ -107,13 +104,15 @@ See `docs/specs/04_EVALUATION.md` for details.
 ```
 diabimmune/
 ├── scripts/
-│   ├── prepare_16s_dataset.py
-│   └── prepare_hf_legacy.py
+│   └── prepare_16s_dataset.py      # Primary dataset prep
 ├── data/
-│   ├── raw/
+│   ├── raw/                         # Source of truth
 │   └── processed/
-│       ├── 16s/
-│       └── hf_legacy/
+│       └── 16s/                     # Primary processed dataset
+├── _reference/                      # Untracked reference data
+│   ├── greengenes/                  # Greengenes 13_8 (downloaded)
+│   ├── hf_legacy/                   # Deprecated HuggingFace data
+│   └── Microbiome-Modelling/        # Reference model code
 ├── docs/
 │   ├── MASTER.MD
 │   ├── data/

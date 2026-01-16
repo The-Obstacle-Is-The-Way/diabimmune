@@ -21,8 +21,18 @@ External resource (not tracked):
 - Greengenes 13_8 tarball (305MB)
   - URL: `http://greengenes.microbio.me/greengenes_release/gg_13_5/gg_13_8_otus.tar.gz`
   - Validation: `gzip -t gg_13_8_otus.tar.gz` must pass
-  - File inside tarball used for sequences: `gg_13_8_otus/rep_set/97_otus.fasta`
+  - File inside tarball used for sequences: `gg_13_8_otus/rep_set/99_otus.fasta` (preferred) or `97_otus.fasta`
   - FASTA headers are integer OTU IDs, e.g. `>1952`
+
+### OTU Matching Rates (Verified 2026-01-15)
+
+| Clustering | OTUs Matched | Match Rate |
+|------------|--------------|------------|
+| 97% | 1,356 / 2,005 | 68% |
+| **99%** | **1,783 / 2,005** | **89%** |
+| Unmatched | 222 / 2,005 | 11% |
+
+**Recommendation**: Use 99% clustering (`99_otus.fasta`) for maximum coverage. The 222 unmatched OTUs (11%) may be de novo assignments or version mismatches; handle as missing data or impute with zeros.
 
 Model:
 - ProkBERT: `neuralbioinfo/prokbert-mini-long`

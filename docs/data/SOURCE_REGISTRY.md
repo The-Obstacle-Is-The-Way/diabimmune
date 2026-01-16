@@ -28,13 +28,15 @@ Local raw files (sha256, bytes):
 
 ---
 
-## NCBI SRA (Legacy HF subset bridge only)
+## NCBI SRA (Legacy HF subset bridge only — DEPRECATED)
 
 BioProject:
 - https://www.ncbi.nlm.nih.gov/bioproject/PRJNA290380
 
-RunInfo download endpoint (used by `scripts/prepare_hf_legacy.py`):
+RunInfo download endpoint (used for WGS-to-subject mapping):
 - https://www.ncbi.nlm.nih.gov/Traces/sra-db-be/runinfo?term=PRJNA290380
+
+Note: This is only used for the legacy HF subset (785 WGS samples), not the primary 16S dataset.
 
 Local file:
 - `data/raw/sra_runinfo.csv`
@@ -58,7 +60,10 @@ Local file (not tracked; path is gitignored):
   - bytes: `320067060`
 
 Files used inside tarball:
-- `gg_13_8_otus/rep_set/97_otus.fasta` (FASTA; headers are OTU IDs like `>1952`)
+- `gg_13_8_otus/rep_set/99_otus.fasta` (preferred; 89% OTU match rate)
+- `gg_13_8_otus/rep_set/97_otus.fasta` (fallback; 68% OTU match rate)
+
+FASTA headers are OTU IDs like `>1952`.
 
 ---
 
@@ -95,11 +100,19 @@ Optional page snapshot hash (sha256 of fetched HTML): `0d74a552600b75562aa31fe14
 
 ---
 
-## HuggingFace Legacy Embeddings Dataset (Not used for food-only experiments)
+## HuggingFace Legacy Embeddings Dataset (DEPRECATED)
+
+**Status**: Moved to `_reference/hf_legacy/` (untracked). Do not use for food-allergy-only experiments.
 
 Dataset:
 - https://huggingface.co/datasets/hugging-science/AI4FA-Diabimmune
 
-Pinned dataset revision (used by `scripts/prepare_hf_legacy.py`):
+Pinned dataset revision (historical reference only):
 - `7761eea93dad5712a03452786b43031dc9b04233`
+
+Why deprecated:
+- Only 785 WGS-keyed samples (not full 1,584 16S)
+- Broken Month_* structure in upstream
+- Label is `any(allergy_*) | totalige_high` (not food-only)
+- Embedding provenance unclear
 
