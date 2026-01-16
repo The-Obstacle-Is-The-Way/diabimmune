@@ -1,7 +1,10 @@
 # Data Investigation Findings
 
 **Date**: 2026-01-15
-**Status**: Resolved for baseline (canonical embeddings + ground-truth metadata)
+**Status**: Legacy HuggingFace subset resolved (canonical embeddings + ground-truth metadata)
+
+**Note**: The primary project direction is now the full 16S OTU dataset + food-allergy-only labels.
+See `docs/MASTER.MD` and `scripts/prepare_16s_dataset.py`.
 
 ---
 
@@ -31,7 +34,7 @@ We have **two data sources** that don't play nicely together:
 
 ### What we got:
 
-Upstream repo: https://huggingface.co/datasets/hugging-science/AI4FA-Diabimmune  
+Upstream repo: https://huggingface.co/datasets/hugging-science/AI4FA-Diabimmune
 Pinned revision (recommended): `7761eea93dad5712a03452786b43031dc9b04233`
 
 The upstream dataset layout (as published) contains:
@@ -134,17 +137,17 @@ subjectID = T012374 (from RData)
 
 To make this usable, we created:
 
-### `data/processed/unified_samples.csv`
+### `data/processed/hf_legacy/unified_samples.csv`
 The "clean" dataset with everything linked:
 ```csv
 srs_id,gid_wgs,subject_id,collection_month,age_days,country,label
 SRS1719087,G69146,E016030,28.0,848.0,EST,0
 ```
 
-### `data/processed/srs_to_subject_mapping.csv`
+### `data/processed/hf_legacy/srs_to_subject_mapping.csv`
 Just the ID mapping for reference.
 
-### `data/processed/microbiome_embeddings_100d.h5`
+### `data/processed/hf_legacy/microbiome_embeddings_100d.h5`
 A single canonical embedding file (one 100-d vector per SRS, 785 keys) created by selecting, for each sample, the vector from `Month_{collection_month}` where `collection_month` is taken from the RData ground truth.
 
 ---
@@ -163,7 +166,7 @@ A single canonical embedding file (one 100-d vector per SRS, 785 keys) created b
 - We're trusting embeddings we didn't generate
 
 ### What's Bad ❌
-- No provenance script - we did this interactively
+- Provenance is non-trivial (HF snapshot + SRA bridge), but is now reproducible via `scripts/prepare_hf_legacy.py`
 - Complex mapping chain with external dependency (SRA)
 - Can't verify embedding quality without regenerating
 
@@ -173,7 +176,7 @@ A single canonical embedding file (one 100-d vector per SRS, 785 keys) created b
 
 ### Option A: Trust the Embeddings, Fix the Labels
 - Use HuggingFace embeddings as-is
-- Use our `unified_samples.csv` for proper subject grouping
+- Use `data/processed/hf_legacy/unified_samples.csv` for proper subject grouping
 - Accept that "allergic" = any allergy, not just food
 
 **Pros**: Fast, data is ready
@@ -217,16 +220,16 @@ The embeddings themselves are probably fine - they come from a real model (ProkB
 |------|--------|---------|-------------|
 | `data/raw/DIABIMMUNE_Karelia_metadata.RData` | Broad Institute | Ground truth metadata | ✅ High |
 | `data/raw/sra_runinfo.csv` | NCBI SRA | ID mapping bridge | ✅ High |
-| `data/processed/microbiome_embeddings_100d.h5` | HuggingFace (exported locally) | Embeddings (one vector per SRS) | ⚠️ Medium |
-| `data/processed/srs_to_subject_mapping.csv` | Us (from NCBI SRA + RData) | SRS → gid_wgs → subjectID | ✅ High |
-| `data/processed/unified_samples.csv` | Us | Clean merged data | ✅ High |
+| `data/processed/hf_legacy/microbiome_embeddings_100d.h5` | HuggingFace (exported locally) | Embeddings (one vector per SRS) | ⚠️ Medium |
+| `data/processed/hf_legacy/srs_to_subject_mapping.csv` | Us (from NCBI SRA + RData) | SRS → gid_wgs → subjectID | ✅ High |
+| `data/processed/hf_legacy/unified_samples.csv` | Us | Clean merged data | ✅ High |
 
 ---
 
 ## Missing: Provenance Script
 
-This repo should include a single reproducible entrypoint script (`scripts/prepare_data.py`) that:
+This repo includes a single reproducible entrypoint script (`scripts/prepare_hf_legacy.py`) that:
 - downloads the HF embeddings at a pinned revision (or uses local files),
-- rebuilds `srs_to_subject_mapping.csv` and `unified_samples.csv` from the RData + SRA runinfo,
+- rebuilds `data/processed/hf_legacy/srs_to_subject_mapping.csv` and `data/processed/hf_legacy/unified_samples.csv` from the RData + SRA runinfo,
 - exports `microbiome_embeddings_100d.h5`,
 - validates row/subject counts and key alignment.

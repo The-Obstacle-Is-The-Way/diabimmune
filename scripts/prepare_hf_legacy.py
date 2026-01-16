@@ -43,6 +43,13 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def relpath(path: Path, root: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def coerce_bool(value: Any) -> bool:
     if value is None:
         return False
@@ -50,9 +57,9 @@ def coerce_bool(value: Any) -> bool:
         return False
     if isinstance(value, bool):
         return value
-    if isinstance(value, (int, np.integer)):
+    if isinstance(value, int | np.integer):
         return bool(int(value))
-    if isinstance(value, (float, np.floating)):
+    if isinstance(value, float | np.floating):
         return bool(float(value))
     if isinstance(value, str):
         v = value.strip().lower()
@@ -256,14 +263,14 @@ def build_manifest(
         "created_at": datetime.now(UTC).isoformat(),
         "sources": {
             "rdata": {
-                "path": str(paths.rdata_path),
+                "path": relpath(paths.rdata_path, paths.project_root),
                 "shape": [int(rdata_metadata.shape[0]), int(rdata_metadata.shape[1])],
                 "subjects": int(rdata_metadata["subjectID"].nunique()),
             },
             "ncbi_sra": {
                 "bioproject": "PRJNA290380",
                 "runinfo_url": SRA_RUNINFO_URL,
-                "runinfo_path": str(paths.sra_runinfo_path),
+                "runinfo_path": relpath(paths.sra_runinfo_path, paths.project_root),
                 "rows": int(len(pd.read_csv(paths.sra_runinfo_path))),
             },
             "huggingface": {
@@ -274,7 +281,7 @@ def build_manifest(
         },
         "label_definition": "label=1 if any(allergy_*) OR totalige_high (computed from RData; matches HF label)",
         "embedding_export": {
-            "output_h5": str(paths.embeddings_h5),
+            "output_h5": relpath(paths.embeddings_h5, paths.project_root),
             "rule": "for each sample, use the vector from Month_{collection_month} (collection_month from RData)",
             "dims": 100,
         },
@@ -286,17 +293,17 @@ def build_manifest(
         },
         "artifacts": {
             "unified_samples_csv": {
-                "path": str(paths.unified_samples_csv),
+                "path": relpath(paths.unified_samples_csv, paths.project_root),
                 "sha256": sha256_file(paths.unified_samples_csv)
                 if paths.unified_samples_csv.exists()
                 else None,
             },
             "srs_to_subject_mapping_csv": {
-                "path": str(paths.mapping_csv),
+                "path": relpath(paths.mapping_csv, paths.project_root),
                 "sha256": sha256_file(paths.mapping_csv) if paths.mapping_csv.exists() else None,
             },
             "microbiome_embeddings_h5": {
-                "path": str(paths.embeddings_h5),
+                "path": relpath(paths.embeddings_h5, paths.project_root),
                 "sha256": sha256_file(paths.embeddings_h5)
                 if paths.embeddings_h5.exists()
                 else None,
@@ -308,7 +315,7 @@ def build_manifest(
 
 def resolve_paths(project_root: Path) -> Paths:
     raw_dir = project_root / "data" / "raw"
-    processed_dir = project_root / "data" / "processed"
+    processed_dir = project_root / "data" / "processed" / "hf_legacy"
     return Paths(
         project_root=project_root,
         raw_dir=raw_dir,

@@ -1,8 +1,8 @@
 {
-  "created_at": "2026-01-15T21:24:43.524170+00:00",
+  "created_at": "2026-01-16T03:27:45.500552+00:00",
   "sources": {
     "rdata": {
-      "path": "/Users/ray/Desktop/CLARITY-DIGITAL-TWIN/diabimmune/data/raw/DIABIMMUNE_Karelia_metadata.RData",
+      "path": "data/raw/DIABIMMUNE_Karelia_metadata.RData",
       "shape": [
         1946,
         59
@@ -12,7 +12,7 @@
     "ncbi_sra": {
       "bioproject": "PRJNA290380",
       "runinfo_url": "https://www.ncbi.nlm.nih.gov/Traces/sra-db-be/runinfo?term=PRJNA290380",
-      "runinfo_path": "/Users/ray/Desktop/CLARITY-DIGITAL-TWIN/diabimmune/data/raw/sra_runinfo.csv",
+      "runinfo_path": "data/raw/sra_runinfo.csv",
       "rows": 785
     },
     "huggingface": {
@@ -25,7 +25,7 @@
   },
   "label_definition": "label=1 if any(allergy_*) OR totalige_high (computed from RData; matches HF label)",
   "embedding_export": {
-    "output_h5": "/Users/ray/Desktop/CLARITY-DIGITAL-TWIN/diabimmune/data/processed/microbiome_embeddings_100d.h5",
+    "output_h5": "data/processed/hf_legacy/microbiome_embeddings_100d.h5",
     "rule": "for each sample, use the vector from Month_{collection_month} (collection_month from RData)",
     "dims": 100
   },
@@ -43,15 +43,15 @@
   },
   "artifacts": {
     "unified_samples_csv": {
-      "path": "/Users/ray/Desktop/CLARITY-DIGITAL-TWIN/diabimmune/data/processed/unified_samples.csv",
+      "path": "data/processed/hf_legacy/unified_samples.csv",
       "sha256": "37335cfd4ec6424e30faa893526d03d8af70a422aae74bdbc7baa5e4f5bd459c"
     },
     "srs_to_subject_mapping_csv": {
-      "path": "/Users/ray/Desktop/CLARITY-DIGITAL-TWIN/diabimmune/data/processed/srs_to_subject_mapping.csv",
+      "path": "data/processed/hf_legacy/srs_to_subject_mapping.csv",
       "sha256": "957e2e3dd281c4051e0fd3a0608a221d4e3cf320167a52d7d07a1e490e66d74d"
     },
     "microbiome_embeddings_h5": {
-      "path": "/Users/ray/Desktop/CLARITY-DIGITAL-TWIN/diabimmune/data/processed/microbiome_embeddings_100d.h5",
+      "path": "data/processed/hf_legacy/microbiome_embeddings_100d.h5",
       "sha256": "f42421999217091d6f310d4ac4701f887ece9f2550b4d0e535093ba2e05dbb5f"
     }
   }
