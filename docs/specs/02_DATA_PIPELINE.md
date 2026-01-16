@@ -10,15 +10,17 @@ Load pre-downloaded embeddings and use the pre-computed mapping files to create 
 
 ## Critical Discovery: HuggingFace Month_N Structure
 
-**⚠️ WARNING: The HuggingFace `Month_N` folders do NOT represent collection month!**
+**⚠️ WARNING: The HuggingFace `Month_N` folders do NOT represent “samples collected at month N”.**
 
 ```
 Evidence found during data validation:
 - Sample SRS1719502 appears in: Month_1, Month_4, Month_7, Month_10, Month_13, Month_16, Month_19, Month_22, Month_28, Month_36
-- Embeddings are IDENTICAL across these folders
-- Same 785 samples duplicated across all Month folders
+- Month_* folders are overlapping subject subsets (the same sample can appear in many folders)
+- Duplicate embeddings for the same SRS are NOT guaranteed identical (small numeric differences exist)
 
-Conclusion: Month_N is NOT collection month. Use unified_samples.csv for TRUE collection months.
+Conclusion:
+- Use `unified_samples.csv` (from the RData) for TRUE collection month.
+- Export a single canonical embedding file so each SRS has exactly one 100-d vector.
 ```
 
 ---
@@ -27,10 +29,12 @@ Conclusion: Month_N is NOT collection month. Use unified_samples.csv for TRUE co
 
 | Source | Location | Contents | Status |
 |--------|----------|----------|--------|
-| **Embeddings** | `data/raw/huggingface/` | 100-dim vectors per sample | ✅ Downloaded |
+| **Embeddings (canonical)** | `data/processed/microbiome_embeddings_100d.h5` | 100-dim vectors per sample (785 keys) | ✅ Created |
 | **SRA Mapping** | `data/raw/sra_runinfo.csv` | SRS → gid_wgs mapping | ✅ Downloaded |
-| **Subject IDs** | `DIABIMMUNE_Karelia_metadata.RData` | gid_wgs → subjectID | ✅ Present |
+| **Subject IDs** | `data/raw/DIABIMMUNE_Karelia_metadata.RData` | gid_wgs → subjectID | ✅ Present |
 | **Unified Dataset** | `data/processed/unified_samples.csv` | Complete mapping | ✅ Created |
+
+Pinned HuggingFace dataset revision (for reproducibility): `7761eea93dad5712a03452786b43031dc9b04233`
 
 ---
 
@@ -59,12 +63,12 @@ Based on actual exploration of `DIABIMMUNE_Karelia_metadata.RData`:
 | Expected (in old spec) | Actual Column | Description |
 |------------------------|---------------|-------------|
 | `host_subject_id` | **`subjectID`** | Infant identifier (E*, T*, P*) |
-| `sample_accession` | **`SampleID`** | Internal ID (NOT SRS format!) |
+| *(SRS sample ID)* | **(not present)** | SRS IDs are not stored in RData |
 | `age_months` | **`collection_month`** | Collection month (1-38) |
 | *(not in old spec)* | **`gid_wgs`** | WGS library ID (G* format) - KEY FOR MAPPING |
 | `country` | **`country`** | FIN, EST, RUS |
 
-**Critical**: The RData `SampleID` column is NOT the SRS format used by HuggingFace. The mapping goes through `gid_wgs`.
+**Critical**: The RData `SampleID` column is NOT the SRS format used by HuggingFace. The mapping goes through `gid_wgs` via NCBI SRA (or ENA).
 
 ---
 
@@ -127,8 +131,8 @@ def load_unified_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, pd.DataF
     # Load unified samples
     samples = pd.read_csv("data/processed/unified_samples.csv")
 
-    # Load embeddings from Month_1 (all months have same embeddings)
-    embed_path = Path("data/raw/huggingface/processed/microbiome_embeddings/Month_1/microbiome_embeddings.h5")
+    # Load canonical embeddings (one vector per SRS)
+    embed_path = Path("data/processed/microbiome_embeddings_100d.h5")
 
     embeddings = {}
     with h5py.File(embed_path, 'r') as f:
@@ -172,6 +176,8 @@ def load_by_age_bin() -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]:
 
 ## Dataset Statistics
 
+Note: The RData contains more WGS library IDs (`gid_wgs`) than we have embeddings for. `unified_samples.csv` is the 785-sample intersection defined by PRJNA290380 runinfo + HuggingFace embeddings.
+
 | Metric | Value |
 |--------|-------|
 | Total samples | 785 |
@@ -203,7 +209,8 @@ def validate_data_integrity() -> bool:
     required_files = [
         "data/processed/unified_samples.csv",
         "data/processed/srs_to_subject_mapping.csv",
-        "data/raw/huggingface/processed/microbiome_embeddings/Month_1/microbiome_embeddings.h5",
+        "data/processed/microbiome_embeddings_100d.h5",
+        "data/raw/DIABIMMUNE_Karelia_metadata.RData",
         "data/raw/sra_runinfo.csv",
     ]
 
@@ -220,7 +227,7 @@ def validate_data_integrity() -> bool:
     assert samples['label'].isin([0, 1]).all(), "Labels must be 0 or 1"
 
     # Check embeddings exist
-    with h5py.File("data/raw/huggingface/processed/microbiome_embeddings/Month_1/microbiome_embeddings.h5", 'r') as f:
+    with h5py.File("data/processed/microbiome_embeddings_100d.h5", 'r') as f:
         embed_srs = set(f.keys())
 
     sample_srs = set(samples['srs_id'])
@@ -261,7 +268,7 @@ import pyreadr
 sra_df = pd.read_csv("data/raw/sra_runinfo.csv")
 
 # Load RData
-rdata = pyreadr.read_r("DIABIMMUNE_Karelia_metadata.RData")['metadata']
+rdata = pyreadr.read_r("data/raw/DIABIMMUNE_Karelia_metadata.RData")['metadata']
 
 # Create mapping chain
 # SRS (Sample column) → LibraryName → gid_wgs → subjectID
@@ -281,7 +288,7 @@ gid_to_subject = dict(zip(rdata['gid_wgs'].dropna(),
 
 ## Verification Checklist
 
-- [x] HuggingFace data downloaded to `data/raw/huggingface/`
+- [x] Canonical embeddings exported: `data/processed/microbiome_embeddings_100d.h5`
 - [x] SRA run info downloaded to `data/raw/sra_runinfo.csv`
 - [x] ID mapping created: `data/processed/srs_to_subject_mapping.csv`
 - [x] Unified dataset created: `data/processed/unified_samples.csv`

@@ -12,10 +12,10 @@ Initialize a modern Python project with `uv` for dependency management, strict t
 [project]
 name = "diabimmune-classifier"
 version = "0.1.0"
-description = "Food allergy classifier using DIABIMMUNE microbiome embeddings"
+description = "Allergy/atopy classifier using DIABIMMUNE microbiome embeddings"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [
     { name = "Your Name", email = "you@example.com" }
 ]
@@ -62,7 +62,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
@@ -86,7 +86,7 @@ ignore = [
 known-first-party = ["diabimmune"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -108,7 +108,7 @@ ignore_missing_imports = true
 ## File: `.python-version`
 
 ```
-3.11
+3.12
 ```
 
 ---
@@ -218,20 +218,17 @@ repos:
 # 1. Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. Create virtual environment and install dependencies
-uv venv
+# 2. Create virtual environment and install dependencies (uses uv.lock)
+uv sync
 source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
 
-# 3. Install all dependencies (including dev)
-uv pip install -e ".[dev]"
-
-# 4. Install pre-commit hooks
+# 3. Install pre-commit hooks
 pre-commit install
 
-# 5. Register Jupyter kernel
+# 4. Register Jupyter kernel
 python -m ipykernel install --user --name diabimmune --display-name "DIABIMMUNE Classifier"
 
-# 6. Verify installation
+# 5. Verify installation
 python -c "import sklearn, pandas, h5py, pyreadr; print('All imports OK')"
 ```
 
@@ -249,7 +246,8 @@ diabimmune/
 ├── pyproject.toml
 ├── LICENSE
 ├── README.md
-├── DIABIMMUNE_Karelia_metadata.RData
+├── scripts/
+│   └── prepare_data.py
 ├── docs/
 │   ├── MASTER.MD
 │   └── specs/
@@ -257,9 +255,14 @@ diabimmune/
 │       └── ...
 ├── notebooks/
 │   └── 01_baseline_classifier.ipynb
-├── data/                           # gitignored, created at runtime
-│   └── huggingface/
-│       └── AI4FA-Diabimmune/
+├── data/
+│   ├── raw/
+│   │   ├── DIABIMMUNE_Karelia_metadata.RData
+│   │   └── sra_runinfo.csv
+│   └── processed/
+│       ├── unified_samples.csv
+│       ├── srs_to_subject_mapping.csv
+│       └── microbiome_embeddings_100d.h5
 └── results/                        # gitignored, created at runtime
     └── ...
 ```
@@ -268,8 +271,7 @@ diabimmune/
 
 ## Verification Checklist
 
-- [ ] `uv venv` creates `.venv/`
-- [ ] `uv pip install -e ".[dev]"` completes without errors
+- [ ] `uv sync` creates `.venv/` and installs dependencies
 - [ ] `pre-commit run --all-files` passes
 - [ ] `python -c "import sklearn, pandas, h5py, pyreadr"` works
 - [ ] JupyterLab launches with `jupyter lab`

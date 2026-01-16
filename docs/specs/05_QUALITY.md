@@ -26,7 +26,7 @@ Ruff is the fastest Python linter, replacing flake8, isort, and black.
 
 ```toml
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100
 
 [tool.ruff.lint]
@@ -87,7 +87,7 @@ Static type checking catches bugs before runtime.
 
 ```toml
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -223,7 +223,7 @@ Automate all checks on every commit.
 ```yaml
 # See https://pre-commit.com for more information
 default_language_version:
-  python: python3.11
+  python: python3.12
 
 repos:
   # Standard hooks

@@ -65,9 +65,9 @@ The **Three-Country Cohort** studies the **hygiene hypothesis**—why autoimmune
 | Type | Samples | Description |
 |------|---------|-------------|
 | **16S rRNA amplicon** | 1,584 | V4 region, paired-end |
-| **Whole-genome shotgun (WGS)** | 785 | Full metagenome |
+| **Whole-genome shotgun (WGS, embeddings-backed subset)** | 785 | BioProject PRJNA290380 / HuggingFace embeddings |
 
-**⚠️ HuggingFace embeddings are from WGS samples (785), not 16S (1,584)!**
+**Note**: The RData contains additional `gid_wgs` entries beyond the 785 that have embeddings; this project uses the 785-sample intersection defined by PRJNA290380 runinfo + HuggingFace embeddings.
 
 ### Label Definition (CORRECTED)
 
@@ -125,19 +125,23 @@ The embeddings come from [Matteo's Microbiome World Model](https://the-puzzler.g
 
 Available on HuggingFace: **[hugging-science/AI4FA-Diabimmune](https://huggingface.co/datasets/hugging-science/AI4FA-Diabimmune)**
 
+Pinned revision (recommended for reproducibility): `7761eea93dad5712a03452786b43031dc9b04233`
+
 **⚠️ CRITICAL WARNING: HuggingFace Month_N Structure**
 
 ```
-The Month_N folders do NOT represent collection month!
+The HuggingFace Month_N folders are NOT a partition of samples by collection month.
 
-Evidence:
-- Sample SRS1719502 appears in: Month_1, Month_4, Month_7, Month_10, Month_13, Month_16, Month_19, Month_22, Month_28, Month_36
-- Embeddings are IDENTICAL across these folders
-- Same 785 samples are duplicated across folders
+What they actually imply:
+- The same SRS sample appears in many Month_* folders (overlapping subject subsets).
+- The embedding vector for the same SRS is NOT guaranteed identical across folders (small numeric differences exist).
 
-For proper analysis, use:
-  data/processed/unified_samples.csv
-Which contains the TRUE collection_month from RData.
+To make modeling unambiguous, this project exports a single canonical embedding file:
+- For each sample, we select the embedding from Month_{TRUE collection_month} (collection_month comes from the RData ground truth).
+
+Use:
+  data/processed/unified_samples.csv            (ground-truth metadata per WGS sample)
+  data/processed/microbiome_embeddings_100d.h5  (one embedding vector per SRS sample)
 ```
 
 ---
@@ -265,17 +269,19 @@ diabimmune/
 │   └── specs/                    # Detailed implementation specs
 ├── notebooks/
 │   └── 01_baseline_classifier.ipynb
-├── data/                         # COMMITTED (small enough)
+├── scripts/
+│   └── prepare_data.py           # Rebuilds processed data deterministically
+├── data/                         # Small, local, reproducible
 │   ├── README.md                 # Provenance documentation
 │   ├── raw/
-│   │   ├── huggingface/          # Downloaded from HF (6.9 MB)
-│   │   └── sra_runinfo.csv       # SRA metadata
+│   │   ├── DIABIMMUNE_Karelia_metadata.RData  # Ground-truth metadata (687 KB)
+│   │   └── sra_runinfo.csv                    # SRA metadata bridge (785 rows)
 │   └── processed/
 │       ├── srs_to_subject_mapping.csv  # ID mapping
-│       └── unified_samples.csv         # PRIMARY DATASET
+│       ├── unified_samples.csv         # Primary sample table (785 rows)
+│       └── microbiome_embeddings_100d.h5  # Canonical embeddings (785 keys)
 ├── results/                      # Evaluation outputs (gitignored)
 │   └── ...
-├── DIABIMMUNE_Karelia_metadata.RData  # Subject metadata (687 KB)
 ├── pyproject.toml                # Dependencies (uv)
 ├── .gitignore
 ├── LICENSE
@@ -288,9 +294,9 @@ diabimmune/
 
 | Step | Task | Status |
 |------|------|--------|
-| 1 | **Download embeddings** | ✅ Done (in `data/raw/huggingface/`) |
-| 2 | **Extract subject_ids** | ✅ Done (in `data/processed/`) |
-| 3 | **Create proper metadata** | ✅ Done (`unified_samples.csv`) |
+| 1 | **Prepare data** | ✅ Done (`scripts/prepare_data.py`) |
+| 2 | **Load unified samples** | ✅ Done (`data/processed/unified_samples.csv`) |
+| 3 | **Load canonical embeddings** | ✅ Done (`data/processed/microbiome_embeddings_100d.h5`) |
 | 4 | **Run evaluation** | `StratifiedGroupKFold` + LogReg |
 | 5 | **Visualize** | AUROC per age bin, confusion matrices |
 | 6 | **Document** | What worked, limitations |
@@ -305,9 +311,10 @@ diabimmune/
 | **Label includes environmental allergies** | Broader than "food allergy" | Document clearly |
 | Missing `subject_id` in HF CSVs | Data leakage | Use mapping file |
 | Class imbalance (42/58) | Biased predictions | `class_weight='balanced'` |
-| Variable samples per subject | Uneven representation | Subject-level CV |
-| Month 38 has only 4 samples | Unreliable metrics | Exclude from analysis |
-| Some subjects have only 1 sample | Limited data | Still include |
+| Variable samples per subject | Subjects with many samples dominate | Train with per-subject weights and report subject-level metrics |
+| Time leakage | Inflated performance when using future samples | If predicting “by month m”, only use samples with `collection_month <= m` |
+| Small-month instability | Some months have too few subjects per class | Use dynamic `n_splits` and skip months with `n_splits < 2` |
+| Country confounding | Model may learn country effects | Add leave-one-country-out evaluation |
 
 ---
 
@@ -317,10 +324,10 @@ diabimmune/
 |------|------|-------------|
 | `data/processed/unified_samples.csv` | 785 | Primary dataset |
 | `data/processed/srs_to_subject_mapping.csv` | 785 | ID mapping |
-| `data/raw/huggingface/metadata/Month_*.csv` | varies | HF labels (ignore Month_N structure) |
-| `data/raw/huggingface/processed/microbiome_embeddings/*/microbiome_embeddings.h5` | varies | 100-dim embeddings |
+| `data/processed/microbiome_embeddings_100d.h5` | 785 keys | Canonical 100-dim embeddings (one per SRS) |
+| `data/processed/dataset_manifest.json` | 1 | Provenance + checksums + counts |
 | `data/raw/sra_runinfo.csv` | 785 | SRA metadata for ID mapping |
-| `DIABIMMUNE_Karelia_metadata.RData` | 1,946 | Full subject metadata |
+| `data/raw/DIABIMMUNE_Karelia_metadata.RData` | 1,946 | Full subject metadata |
 
 ---
 
@@ -335,8 +342,8 @@ from pathlib import Path
 # Load unified samples with TRUE collection months
 samples = pd.read_csv("data/processed/unified_samples.csv")
 
-# Load embeddings (use any Month_N - they're all the same)
-embed_path = Path("data/raw/huggingface/processed/microbiome_embeddings/Month_1/microbiome_embeddings.h5")
+# Load canonical embeddings (one vector per SRS sample)
+embed_path = Path("data/processed/microbiome_embeddings_100d.h5")
 with h5py.File(embed_path, 'r') as f:
     embeddings = {srs: np.array(f[srs]) for srs in f.keys()}
 

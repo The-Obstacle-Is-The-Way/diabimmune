@@ -44,7 +44,7 @@ Combines two critical requirements:
 | Requirement | How It's Met |
 |-------------|--------------|
 | **No leakage** | `groups=subject_ids` keeps all samples from one infant together |
-| **Class balance** | Stratification maintains ~35/65 allergic/healthy ratio in each fold |
+| **Class balance** | Stratification maintains ~42/58 allergic/healthy ratio (sample-level; subject-level is 90/122) |
 
 ### Implementation
 
@@ -89,6 +89,36 @@ def validate_cv_splits(
         print(f"  Test:  {len(test_idx)} samples, {len(test_subjects)} subjects, "
               f"{test_ratio:.1%} allergic")
 ```
+
+### Small-Month Handling (Dynamic `n_splits`)
+
+Some timepoints/months have too few subjects per class to support 5-fold CV. Use a dynamic splitter:
+
+```python
+def choose_n_splits(
+    y: np.ndarray,
+    groups: np.ndarray,
+    n_splits_max: int = 5,
+) -> int:
+    """Choose the largest feasible n_splits given subject counts per class."""
+    unique_groups, first_idx = np.unique(groups, return_index=True)
+    y_group = y[first_idx]  # safe because labels are constant within subject
+
+    n_pos = int((y_group == 1).sum())
+    n_neg = int((y_group == 0).sum())
+    n_splits = min(n_splits_max, n_pos, n_neg)
+    if n_splits < 2:
+        raise ValueError(f"Insufficient subjects for CV: pos={n_pos} neg={n_neg}")
+    return n_splits
+```
+
+### Within-Subject Weighting (Subjects vs Samples)
+
+If you train on **samples** (multiple rows per subject), subjects with many samples dominate both training and metrics.
+
+Preferred (simplest + robust): build a **subject-level** feature table (one row per subject) for each prediction horizon `m` by aggregating all samples with `collection_month <= m` (mean or last embedding). Then evaluate with stratified CV on subjects.
+
+Secondary option (sample-level): train with per-subject `sample_weight` so each subject contributes total weight 1, and report metrics at the subject level by aggregating test predictions per subject (e.g., mean predicted probability).
 
 ---
 
@@ -189,13 +219,28 @@ HuggingFace `label=1` (allergic) includes **ANY** of:
 
 ```python
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
-model = LogisticRegression(
-    class_weight="balanced",  # Automatically adjusts weights
-    # Internally sets:
-    # weight_0 = n_samples / (2 * n_class_0)
-    # weight_1 = n_samples / (2 * n_class_1)
-)
+
+def create_model(random_state: int = 42) -> Pipeline:
+    """Baseline model: StandardScaler + LogisticRegression."""
+    return Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            (
+                "clf",
+                LogisticRegression(
+                    solver="liblinear",
+                    penalty="l2",
+                    C=1.0,
+                    class_weight="balanced",
+                    max_iter=2000,
+                    random_state=random_state,
+                ),
+            ),
+        ]
+    )
 ```
 
 ### Solution 2: Stratified Sampling
@@ -245,6 +290,8 @@ Use `data/processed/unified_samples.csv` with TRUE `collection_month` from RData
 
 Determine at which developmental stage the microbiome signal becomes predictive.
 
+**Important**: avoid *time leakage*. If you claim “predict by month m”, inputs must not include samples collected after month m.
+
 ### Age Bins
 
 | Age Bin | Collection Months | Samples | Description |
@@ -256,6 +303,8 @@ Determine at which developmental stage the microbiome signal becomes predictive.
 | 25+ | 25-38 | 97 | Toddler |
 
 ### Approach
+
+Recommended (leakage-resistant): build **one row per subject** at horizon `m` by aggregating samples with `collection_month <= m` (e.g., mean embedding or last observed embedding), then run subject-level CV.
 
 ```python
 def evaluate_by_age_bin(
@@ -390,6 +439,44 @@ def is_significantly_better(
 
 ---
 
+## Country Confounding Check (Leave-One-Country-Out)
+
+Country is a major potential confounder (FIN/EST/RUS differ in environment, diet, and baseline allergy prevalence). Add a strict evaluation where you train on two countries and test on the third.
+
+```python
+def leave_one_country_out(
+    X_subj: np.ndarray,
+    y_subj: np.ndarray,
+    subj_df: pd.DataFrame,  # must include columns: subject_id, country
+) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+
+    for held_out in sorted(subj_df["country"].unique()):
+        train_mask = subj_df["country"] != held_out
+        test_mask = subj_df["country"] == held_out
+
+        if len(set(y_subj[train_mask.to_numpy()])) < 2:
+            continue
+        if len(set(y_subj[test_mask.to_numpy()])) < 2:
+            continue
+
+        model = create_model()
+        model.fit(X_subj[train_mask.to_numpy()], y_subj[train_mask.to_numpy()])
+        prob = model.predict_proba(X_subj[test_mask.to_numpy()])[:, 1]
+
+        rows.append(
+            {
+                "held_out_country": held_out,
+                "n_test_subjects": int(test_mask.sum()),
+                "auroc": float(roc_auc_score(y_subj[test_mask.to_numpy()], prob)),
+            }
+        )
+
+    return pd.DataFrame(rows)
+```
+
+---
+
 ## Visualization Functions
 
 ### ROC Curve
@@ -478,7 +565,7 @@ def plot_auroc_timeline(
 
     ax.set_xlabel("Month", fontsize=12)
     ax.set_ylabel("AUROC", fontsize=12)
-    ax.set_title("Food Allergy Prediction: Performance Over Time", fontsize=14)
+    ax.set_title("DIABIMMUNE Prediction: Performance Over Time", fontsize=14)
     ax.legend()
     ax.grid(True, alpha=0.3)
     ax.set_ylim(0.4, 1.0)
@@ -494,7 +581,7 @@ def plot_auroc_timeline(
 ## Verification Checklist
 
 - [ ] No subject overlap between train/test (verified with `validate_cv_splits`)
-- [ ] Class balance maintained in each fold (~35/65)
+- [ ] Class balance maintained in each fold (~42/58 at sample level; 90/122 at subject level)
 - [ ] AUROC computed correctly (sanity check: random should be ~0.5)
 - [ ] Class weights balanced in model
 - [ ] Metrics aggregated with mean ± std across folds

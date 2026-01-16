@@ -24,7 +24,7 @@ Each spec is self-contained and can be implemented independently, though they bu
 │  ├── HuggingFace download                                       │
 │  ├── RData extraction (subject_id mapping)                      │
 │  ├── H5 embedding loading                                       │
-│  └── Unified dataset creation                                   │
+│  └── Canonical embedding export                                 │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -90,15 +90,14 @@ After reading all specs, implementation order:
 
 1. **Setup project** (01)
    ```bash
-   uv venv && source .venv/bin/activate
-   uv pip install -e ".[dev]"
+   uv sync
+   source .venv/bin/activate
    pre-commit install
    ```
 
 2. **Explore data** (02)
-   - Download from HuggingFace
-   - Load RData, identify column names
-   - Test data loading functions
+   - Run `python scripts/prepare_data.py`
+   - Verify `data/processed/unified_samples.csv` and `data/processed/microbiome_embeddings_100d.h5`
 
 3. **Build notebook** (03)
    - Create sections 0-2 first (setup, data loading)
@@ -123,14 +122,22 @@ After implementation, you'll have:
 
 ```
 diabimmune/
-├── pyproject.toml              # From 01
-├── .pre-commit-config.yaml     # From 01, 05
-├── .gitignore                  # From 01
+├── pyproject.toml                  # From 01
+├── uv.lock                         # From 01 (pinned deps)
+├── .pre-commit-config.yaml         # From 01, 05
+├── .gitignore                      # From 01
+├── scripts/
+│   └── prepare_data.py             # From 02
 ├── notebooks/
 │   └── 01_baseline_classifier.ipynb  # From 03
-├── data/                       # From 02 (gitignored)
-│   └── huggingface/
-│       └── AI4FA-Diabimmune/
+├── data/                           # From 02
+│   ├── raw/
+│   │   ├── DIABIMMUNE_Karelia_metadata.RData
+│   │   └── sra_runinfo.csv
+│   └── processed/
+│       ├── unified_samples.csv
+│       ├── srs_to_subject_mapping.csv
+│       └── microbiome_embeddings_100d.h5
 ├── results/                    # From 03 (gitignored)
 │   ├── summary.csv
 │   ├── detailed_results.csv
