@@ -86,9 +86,20 @@ N_SPLITS_OUTER = 5
 HORIZONS = [None, 3, 6, 12]  # None = all samples (association baseline)
 
 # Paths
-METADATA_DIR = Path("data/processed/longitudinal_wgs_subset")
-EMBEDDINGS_PATH = Path("data/processed/hf_legacy/microbiome_embeddings_100d.h5")
-RESULTS_DIR = Path("results")
+# Note: `jupyter nbconvert --execute` runs with cwd set to the notebook's directory,
+# so auto-detect the repo root by searching for `data/processed/`.
+def find_repo_root(start: Path) -> Path:
+    for p in [start] + list(start.parents):
+        if (p / "data" / "processed").exists():
+            return p
+    raise FileNotFoundError(
+        f"Could not find repo root from {start.resolve()} (expected data/processed/)"
+    )
+
+REPO_ROOT = find_repo_root(Path.cwd())
+METADATA_DIR = REPO_ROOT / "data" / "processed" / "longitudinal_wgs_subset"
+EMBEDDINGS_PATH = REPO_ROOT / "data" / "processed" / "hf_legacy" / "microbiome_embeddings_100d.h5"
+RESULTS_DIR = REPO_ROOT / "results"
 RESULTS_DIR.mkdir(exist_ok=True)
 
 # Set seeds for reproducibility
