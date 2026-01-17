@@ -321,9 +321,9 @@ Do NOT use:
 
 ### Output Tables
 
-- `results/cv_metrics.csv` — per-fold AUROC, AUPRC, F1 (with `horizon` column)
-- `results/cv_summary.csv` — mean ± std across folds (grouped by horizon)
-- `results/loco_metrics.csv` — AUROC per held-out country (with horizon column)
+- `notebooks/results/cv_metrics.csv` — per-fold AUROC, AUPRC, F1 (with `horizon` column)
+- `notebooks/results/cv_summary.csv` — mean ± std across folds (grouped by horizon)
+- `notebooks/results/loco_metrics.csv` — AUROC per held-out country (with horizon column)
 
 ### Output Plots
 

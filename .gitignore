@@ -199,8 +199,8 @@ cython_debug/
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
 
-# Project outputs
-results/
+# Legacy repo-root outputs (deprecated; notebook outputs live in `notebooks/results/`)
+/results/
 
 # Optional local HF snapshot (script can recreate)
 data/raw/huggingface_snapshot/

@@ -78,6 +78,7 @@ import numpy as np
 import pandas as pd
 import sklearn
 import sys
+from IPython.display import display
 
 # Configuration
 RANDOM_SEED = 42
@@ -102,7 +103,9 @@ def find_repo_root(start: Path) -> Path:
 REPO_ROOT = find_repo_root(Path.cwd())
 METADATA_DIR = REPO_ROOT / "data" / "processed" / "longitudinal_wgs_subset"
 EMBEDDINGS_PATH = REPO_ROOT / "data" / "processed" / "hf_legacy" / "microbiome_embeddings_100d.h5"
-RESULTS_DIR = REPO_ROOT / "results"
+# Results go to `notebooks/results/` (alongside the notebook) for transplantability.
+# Note: nbconvert executes notebooks with cwd set to the notebook's directory.
+RESULTS_DIR = Path("results")
 RESULTS_DIR.mkdir(exist_ok=True)
 
 # Set seeds for reproducibility
@@ -251,7 +254,7 @@ for m in HORIZONS:
         horizon_label = "all"
         df_h = df.copy()
     else:
-        horizon_label = f"<= {m}mo"
+        horizon_label = f"≤{m}mo"
         df_h = df[df["month"] <= m].copy()
 
     subj = build_subject_table(df_h)
@@ -259,6 +262,25 @@ for m in HORIZONS:
 
 cv_df = pd.DataFrame(cv_results)
 print(cv_df)
+
+# Summary by horizon (mean ± std across folds)
+summary_rows = []
+for horizon_label, g in cv_df.groupby("horizon"):
+    summary_rows.append({
+        "horizon": horizon_label,
+        "auroc_mean": g["auroc"].mean(),
+        "auroc_std": g["auroc"].std(),
+        "auprc_mean": g["auprc"].mean(),
+        "auprc_std": g["auprc"].std(),
+        "f1_mean": g["f1"].mean(),
+        "f1_std": g["f1"].std(),
+    })
+summary_df = pd.DataFrame(summary_rows)
+
+print("\n" + "="*60)
+print("SUMMARY (mean ± std across folds)")
+print("="*60)
+display(summary_df)
 ```
 
 ### 4) LOCO: Leave-One-Country-Out (Per Horizon, Where Meaningful)
@@ -271,7 +293,7 @@ for m in HORIZONS:
         horizon_label = "all"
         df_h = df.copy()
     else:
-        horizon_label = f"<= {m}mo"
+        horizon_label = f"≤{m}mo"
         df_h = df[df["month"] <= m].copy()
 
     subj = build_subject_table(df_h)
@@ -315,7 +337,10 @@ for m in HORIZONS:
         })
 
 loco_df = pd.DataFrame(loco_results)
-print(loco_df)
+print("\n" + "="*60)
+print("LOCO RESULTS (Leave-One-Country-Out)")
+print("="*60)
+display(loco_df)
 ```
 
 ### 5) Results Summary & Export
@@ -324,20 +349,6 @@ print(loco_df)
 # Save results
 cv_df.to_csv(RESULTS_DIR / "cv_metrics.csv", index=False)
 loco_df.to_csv(RESULTS_DIR / "loco_metrics.csv", index=False)
-
-# Summary by horizon
-summary_rows = []
-for horizon_label, g in cv_df.groupby("horizon"):
-    summary_rows.append({
-        "horizon": horizon_label,
-        "auroc_mean": g["auroc"].mean(),
-        "auroc_std": g["auroc"].std(),
-        "auprc_mean": g["auprc"].mean(),
-        "auprc_std": g["auprc"].std(),
-        "f1_mean": g["f1"].mean(),
-        "f1_std": g["f1"].std(),
-    })
-summary_df = pd.DataFrame(summary_rows)
 summary_df.to_csv(RESULTS_DIR / "cv_summary.csv", index=False)
 
 print("Results saved to results/")
