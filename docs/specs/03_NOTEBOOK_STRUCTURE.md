@@ -6,10 +6,13 @@ Define a minimal, reproducible baseline notebook that:
 - loads Track A data (HF embeddings + Ludo's corrected metadata),
 - trains LogReg with fixed hyperparameters,
 - evaluates with StratifiedGroupKFold (no subject leakage),
+- runs **cumulative horizon analyses** (≤3, ≤6, ≤12 months) using only samples collected up to that horizon,
 - runs LOCO analysis (country confounding check),
 - is structured to support future hyperparameter tuning without restructuring.
 
 Notebook file: `notebooks/01_food_allergy_baseline.ipynb`
+
+Scientific hypotheses and the horizon set are defined in `docs/specs/00_HYPOTHESIS.md`.
 
 ---
 
@@ -54,10 +57,13 @@ That bundle should be sufficient to reproduce the baseline run on another machin
 0. Setup & Configuration
 1. Load Data
 2. Integrity Checks
-3. Outer CV: StratifiedGroupKFold Evaluation
-4. LOCO: Leave-One-Country-Out Analysis
-5. Results Summary & Export
-6. Reproducibility Footer
+3. ANALYSIS 1: Association Baseline (All Samples)
+4. ANALYSIS 2: Horizon ≤3 months (Exploratory)
+5. ANALYSIS 3: Horizon ≤6 months
+6. ANALYSIS 4: Horizon ≤12 months
+7. LOCO Analysis (per viable horizon)
+8. Results Summary & Export
+9. Reproducibility Footer
 ```
 
 ---
@@ -77,6 +83,7 @@ import sys
 # Configuration
 RANDOM_SEED = 42
 N_SPLITS_OUTER = 5
+HORIZONS = [None, 3, 6, 12]  # None = all samples (association baseline)
 
 # Paths
 METADATA_DIR = Path("data/processed/longitudinal_wgs_subset")
@@ -148,9 +155,23 @@ assert df["sid"].duplicated().sum() == 0, "Duplicate SRS IDs found!"
 # Check: labels consistent per patient
 labels_per_patient = df.groupby("patient_id")["label"].nunique()
 assert (labels_per_patient == 1).all(), "Inconsistent labels within patient!"
+
+# Horizon sanity checks (Track A; month derived from file name)
+def horizon_counts(m: int):
+    d = df[df["month"] <= m]
+    return len(d), d["patient_id"].nunique(), d["label"].value_counts().to_dict(), d["country"].value_counts().to_dict()
+
+print("Horizon counts:")
+for m in [3, 6, 12]:
+    n_samp, n_pat, labels, countries_m = horizon_counts(m)
+    print(f"  month<={m}: samples={n_samp}, patients={n_pat}, labels={labels}, countries={countries_m}")
+
+assert horizon_counts(3)[0] == 45
+assert horizon_counts(6)[0] == 110
+assert horizon_counts(12)[0] == 307
 ```
 
-### 3) Outer CV: StratifiedGroupKFold Evaluation
+### 3) ANALYSES 1–4: Association Baseline + Cumulative Horizons (Subject-Level)
 
 ```python
 from sklearn.model_selection import StratifiedGroupKFold
@@ -161,55 +182,100 @@ from sklearn.metrics import roc_auc_score, average_precision_score, f1_score
 
 outer_cv = StratifiedGroupKFold(n_splits=N_SPLITS_OUTER, shuffle=True, random_state=RANDOM_SEED)
 
+def mean_embedding(vectors: pd.Series) -> np.ndarray:
+    return np.mean(np.stack(vectors.to_list(), axis=0), axis=0)
+
+def build_subject_table(samples_df: pd.DataFrame) -> pd.DataFrame:
+    subj = samples_df.groupby("patient_id").agg(
+        label=("label", "first"),
+        country=("country", "first"),
+        n_samples=("sid", "count"),
+    )
+    subj["embedding"] = samples_df.groupby("patient_id")["embedding"].apply(mean_embedding)
+    return subj.reset_index()
+
+def run_cv(subj_df: pd.DataFrame, horizon_label: str) -> list[dict]:
+    X_subj = np.stack(subj_df["embedding"].to_list())
+    y_subj = subj_df["label"].to_numpy()
+    groups = subj_df["patient_id"].to_numpy()
+
+    fold_rows = []
+    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X_subj, y_subj, groups=groups)):
+        X_train, X_test = X_subj[train_idx], X_subj[test_idx]
+        y_train, y_test = y_subj[train_idx], y_subj[test_idx]
+
+        model = Pipeline([
+            ('scaler', StandardScaler()),
+            ('clf', LogisticRegression(
+                C=1.0,
+                class_weight='balanced',
+                solver='lbfgs',
+                max_iter=2000,
+                random_state=RANDOM_SEED
+            ))
+        ])
+
+        model.fit(X_train, y_train)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        y_pred = (y_pred_proba >= 0.5).astype(int)
+
+        fold_rows.append({
+            'horizon': horizon_label,
+            'fold': fold_idx,
+            'n_train_subjects': len(y_train),
+            'n_test_subjects': len(y_test),
+            'auroc': roc_auc_score(y_test, y_pred_proba),
+            'auprc': average_precision_score(y_test, y_pred_proba),
+            'f1': f1_score(y_test, y_pred),
+        })
+    return fold_rows
+
 cv_results = []
 
-for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y, groups=patient_ids)):
-    X_train, X_test = X[train_idx], X[test_idx]
-    y_train, y_test = y[train_idx], y[test_idx]
+for m in HORIZONS:
+    if m is None:
+        horizon_label = "all"
+        df_h = df.copy()
+    else:
+        horizon_label = f"<= {m}mo"
+        df_h = df[df["month"] <= m].copy()
 
-    # Fixed hyperparameters - no tuning, no inner loop needed
-    model = Pipeline([
-        ('scaler', StandardScaler()),
-        ('clf', LogisticRegression(
-            C=1.0,
-            class_weight='balanced',
-            solver='lbfgs',
-            max_iter=2000,
-            random_state=RANDOM_SEED
-        ))
-    ])
-
-    model.fit(X_train, y_train)
-    y_pred_proba = model.predict_proba(X_test)[:, 1]
-    y_pred = (y_pred_proba >= 0.5).astype(int)
-
-    cv_results.append({
-        'fold': fold_idx,
-        'n_train': len(y_train),
-        'n_test': len(y_test),
-        'auroc': roc_auc_score(y_test, y_pred_proba),
-        'auprc': average_precision_score(y_test, y_pred_proba),
-        'f1': f1_score(y_test, y_pred)
-    })
+    subj = build_subject_table(df_h)
+    cv_results.extend(run_cv(subj, horizon_label=horizon_label))
 
 cv_df = pd.DataFrame(cv_results)
 print(cv_df)
-print(f"\nMean AUROC: {cv_df['auroc'].mean():.3f} ± {cv_df['auroc'].std():.3f}")
-print(f"Mean AUPRC: {cv_df['auprc'].mean():.3f} ± {cv_df['auprc'].std():.3f}")
-print(f"Mean F1:    {cv_df['f1'].mean():.3f} ± {cv_df['f1'].std():.3f}")
 ```
 
-### 4) LOCO: Leave-One-Country-Out Analysis
+### 4) LOCO: Leave-One-Country-Out (Per Horizon, Where Meaningful)
 
 ```python
 loco_results = []
 
-for held_out in ['FIN', 'EST', 'RUS']:
-    train_mask = countries != held_out
-    test_mask = countries == held_out
+for m in HORIZONS:
+    if m is None:
+        horizon_label = "all"
+        df_h = df.copy()
+    else:
+        horizon_label = f"<= {m}mo"
+        df_h = df[df["month"] <= m].copy()
 
-    X_train, y_train = X[train_mask], y[train_mask]
-    X_test, y_test = X[test_mask], y[test_mask]
+    subj = build_subject_table(df_h)
+    X_subj = np.stack(subj["embedding"].to_list())
+    y_subj = subj["label"].to_numpy()
+    countries_subj = subj["country"].to_numpy()
+
+    for held_out in ['FIN', 'EST', 'RUS']:
+        train_mask = countries_subj != held_out
+        test_mask = countries_subj == held_out
+
+        y_test = y_subj[test_mask]
+        # AUROC is undefined if held-out set has only one class
+        if len(set(y_test)) < 2:
+            continue
+
+        X_train, y_train = X_subj[train_mask], y_subj[train_mask]
+        X_test = X_subj[test_mask]
 
     model = Pipeline([
         ('scaler', StandardScaler()),
@@ -226,9 +292,10 @@ for held_out in ['FIN', 'EST', 'RUS']:
     y_pred_proba = model.predict_proba(X_test)[:, 1]
 
     loco_results.append({
+        'horizon': horizon_label,
         'held_out': held_out,
-        'n_train': len(y_train),
-        'n_test': len(y_test),
+        'n_train_subjects': len(y_train),
+        'n_test_subjects': len(y_test),
         'auroc': roc_auc_score(y_test, y_pred_proba),
         'auprc': average_precision_score(y_test, y_pred_proba)
     })
@@ -244,13 +311,19 @@ print(loco_df)
 cv_df.to_csv(RESULTS_DIR / "cv_metrics.csv", index=False)
 loco_df.to_csv(RESULTS_DIR / "loco_metrics.csv", index=False)
 
-# Summary
-summary = {
-    'metric': ['AUROC', 'AUPRC', 'F1'],
-    'mean': [cv_df['auroc'].mean(), cv_df['auprc'].mean(), cv_df['f1'].mean()],
-    'std': [cv_df['auroc'].std(), cv_df['auprc'].std(), cv_df['f1'].std()]
-}
-summary_df = pd.DataFrame(summary)
+# Summary by horizon
+summary_rows = []
+for horizon_label, g in cv_df.groupby("horizon"):
+    summary_rows.append({
+        "horizon": horizon_label,
+        "auroc_mean": g["auroc"].mean(),
+        "auroc_std": g["auroc"].std(),
+        "auprc_mean": g["auprc"].mean(),
+        "auprc_std": g["auprc"].std(),
+        "f1_mean": g["f1"].mean(),
+        "f1_std": g["f1"].std(),
+    })
+summary_df = pd.DataFrame(summary_rows)
 summary_df.to_csv(RESULTS_DIR / "cv_summary.csv", index=False)
 
 print("Results saved to results/")

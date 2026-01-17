@@ -29,9 +29,61 @@ Fix:
 
 If the claim is “predict by month m”, you must not use samples with `collection_month > m` anywhere in training or evaluation.
 
+Notes on column names:
+- Track A notebook uses `month` derived from the `Month_N.csv` filename.
+- Track B uses `collection_month` from `samples_food_allergy.csv`.
+
 Fix:
-- filter to `collection_month <= m`
+- filter to `month <= m` (Track A) or `collection_month <= m` (Track B)
 - aggregate to **one row per subject** (mean or last sample up to m)
+
+---
+
+## Horizon Analysis (Prediction vs Association)
+
+This project does **cumulative horizons**, not disjoint “month bins”:
+- ✅ Use `month <= m` (e.g., `m ∈ {3, 6, 12}`) plus an “all samples” baseline
+- ❌ Do not run “months 7–12 only”, “13–24 only”, etc. (answers a different question and is typically underpowered)
+
+Why horizons matter:
+- The Track A label is an **endpoint outcome** repeated across all samples for an infant.
+- Later samples are more likely to be post-onset / post-management → higher risk of reverse causation.
+- Without onset timing, horizons represent **gradations of claim strength**, not a perfect prediction/association boundary.
+
+### Track A Horizon Set (Baseline Notebook)
+
+Use these four horizons:
+- `month <= 3` (exploratory “earliest window”)
+- `month <= 6` (early-life)
+- `month <= 12` (first year; mixed pre/post onset)
+- `all samples` (association baseline)
+
+Counts and caveats live in `docs/specs/00_HYPOTHESIS.md`.
+
+### Required Aggregation (One Row Per Subject Per Horizon)
+
+For each horizon, build a **subject table** with one embedding per infant:
+
+```python
+# df columns (Track A notebook): sid, patient_id, country, label, month, embedding
+df_h = df[df["month"] <= m]  # for m in {3, 6, 12}
+
+def mean_embedding(vectors: pd.Series) -> np.ndarray:
+    return np.mean(np.stack(vectors.to_list(), axis=0), axis=0)
+
+X_subj = np.stack(df_h.groupby("patient_id")["embedding"].apply(mean_embedding).to_list())
+y_subj = df_h.groupby("patient_id")["label"].first().to_numpy()
+country_subj = df_h.groupby("patient_id")["country"].first().to_numpy()
+patient_ids = df_h.groupby("patient_id").size().index.to_numpy()
+```
+
+Then evaluate:
+- CV: `StratifiedGroupKFold(...).split(X_subj, y_subj, groups=patient_ids)`
+- LOCO: train on 2 countries, test on held-out country **within the same horizon**
+
+### LOCO Viability Note
+
+At `month <= 3`, Russia has too few samples/patients for meaningful LOCO testing. Skip (or label as “not meaningful”) rather than over-interpreting.
 
 ---
 
@@ -169,7 +221,7 @@ for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y, groups=pat
 
 ### Dynamic n_splits
 
-For small datasets or per-month analyses:
+For small subsets (e.g., earliest horizons):
 
 ```python
 def choose_n_splits(y_subj: np.ndarray, n_splits_max: int = 5) -> int:
@@ -268,16 +320,16 @@ Do NOT use:
 
 ### Output Tables
 
-- `results/cv_metrics.csv` — per-fold AUROC, AUPRC, F1
-- `results/cv_summary.csv` — mean ± std across folds
-- `results/loco_metrics.csv` — AUROC per held-out country
+- `results/cv_metrics.csv` — per-fold AUROC, AUPRC, F1 (with `horizon` column)
+- `results/cv_summary.csv` — mean ± std across folds (grouped by horizon)
+- `results/loco_metrics.csv` — AUROC per held-out country (with horizon column)
 
 ### Output Plots
 
 - ROC curves (per-fold + mean)
 - Precision-Recall curves (per-fold + mean)
 - LOCO AUROC bar chart by country
-- (Optional) AUROC vs horizon month if doing time analysis
+- (Optional) AUROC vs horizon cutoff `m` (cumulative horizons)
 
 ### Reproducibility Footer
 

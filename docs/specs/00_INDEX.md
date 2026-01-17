@@ -19,10 +19,11 @@ These specs define a minimal, reproducible workflow for the **DIABIMMUNE food al
 
 ## Implementation Order
 
+0. `00_HYPOTHESIS.md` — hypotheses + horizons (prediction vs association)
 1. `01_PROJECT_SETUP.md` — uv + strict tooling
 2. `02_DATA_PIPELINE.md` — prepare 16S + (optional) HF legacy artifacts
-3. `03_NOTEBOOK_STRUCTURE.md` — notebook layout (baseline LogReg)
-4. `04_EVALUATION.md` — leakage-safe evaluation (StratifiedGroupKFold, time horizons, LOCO)
+3. `03_NOTEBOOK_STRUCTURE.md` — notebook layout (baseline LogReg + horizons)
+4. `04_EVALUATION.md` — leakage-safe evaluation (StratifiedGroupKFold, horizons, LOCO)
 5. `05_QUALITY.md` — lint/format/typecheck + notebook hygiene
 6. `06_DATA_SCHEMA.md` — file formats + invariants
 7. `07_OUTCOME_DEFINITION.md` — label + missingness policy

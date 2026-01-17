@@ -53,6 +53,7 @@ The immediate deliverable is a baseline notebook using Track A data with:
 2. Fixed hyperparameters (no inner CV for baseline)
 3. Infrastructure supporting future hyperparameter tuning
 4. Leave-One-Country-Out (LOCO) as secondary analysis
+5. Cumulative horizon analyses (≤3, ≤6, ≤12 months) + “all” association baseline (see `docs/specs/00_HYPOTHESIS.md`)
 
 Data provenance and exact counts live in `docs/data/SOURCE_REGISTRY.md`.
 
@@ -176,11 +177,25 @@ Notes:
 1. **LOCO (Leave-One-Country-Out):** Train on 2 countries, test on 1
    - Addresses country confounding (FIN 49% vs RUS 15% allergy rate)
 
-2. **Time horizon analysis (optional):** Filter to `month <= m`, evaluate predictive signal at early timepoints
+2. **Cumulative horizon analysis:** Evaluate early-life signal using cumulative cutoffs (not disjoint bins)
+   - Horizons: `month <= 3`, `month <= 6`, `month <= 12`, plus “all samples”
+   - Required procedure: filter to horizon, aggregate to 1 row per infant (mean embedding), then run CV/LOCO
+   - Interpretation: earlier horizons support stronger “prediction” framing; later horizons are increasingly confounded by unknown onset timing
+   - Track A horizon sizes (verified):
+     - `month <= 3`: 45 samples / 44 patients
+     - `month <= 6`: 110 samples / 92 patients
+     - `month <= 12`: 307 samples / 160 patients
+     - all: 785 samples / 212 patients
 
 See `docs/specs/04_EVALUATION.md` for implementation details.
 
 ---
+
+## Known Limitations (Track A)
+
+- **Onset timing unavailable**: Labels are endpoint outcomes; we cannot guarantee any sample is pre-diagnosis.
+- **Early milk allergy**: Cow’s milk exposure can occur from birth (formula/breast milk), weakening “pure prediction” claims even at very early horizons.
+- **Sparse Russia at ≤3 months**: Too few RUS samples/subjects for meaningful LOCO evaluation at that horizon.
 
 ## Project Structure
 

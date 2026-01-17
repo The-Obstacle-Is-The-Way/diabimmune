@@ -93,11 +93,31 @@ label = 1 if allergen_class > 0 else 0
 
 ---
 
+## Endpoint vs Collection Timing (Prediction vs Association)
+
+This project uses an **endpoint** label that is repeated across all samples for an infant, while samples occur at different collection times.
+
+What we have:
+- **Endpoint label** (per infant): “ever/endpoint food allergy” (binary)
+- **Collection timing** (per sample):
+  - Track A: `month` derived from the `Month_N.csv` filename
+  - Track B: `collection_month` column
+
+Implications:
+- Late samples (e.g., after the first year) may be post-onset or post-management, so analyses using them should be framed as **association**, not clean prediction.
+- Even early horizons (e.g., ≤3 or ≤6 months) can include post-onset samples for some infants because onset timing is **not available** in our modeling tables.
+
+See:
+- `docs/specs/00_HYPOTHESIS.md` for the horizon set and claim-strength framing
+- `docs/specs/04_EVALUATION.md` for the required “filter to horizon + aggregate to one row per infant” procedure
+
+---
+
 ## Modeling Unit (Strong Recommendation)
 
 Because each subject has multiple samples, evaluation must be **subject-level**:
 - CV grouping: `groups = patient_id` (Track A) or `groups = subject_id` (Track B)
-- If doing time-horizon analysis: aggregate to 1 row per subject per horizon (mean or last sample up to horizon)
+- For horizon analysis: aggregate to 1 row per subject per horizon (mean or last sample up to horizon)
 
 See `docs/specs/04_EVALUATION.md`.
 
