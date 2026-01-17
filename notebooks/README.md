@@ -61,7 +61,7 @@ We analyze **cumulative time windows**, not month-by-month or disjoint bins:
 
 | Horizon | Data Used | Claim Strength |
 |---------|-----------|----------------|
-| ≤3mo | Samples with `month <= 3` (Month_1–Month_3) | Strongest "prediction" framing |
+| ≤3mo | Samples with `month <= 3` (Month_1–Month_3) | Exploratory (high variance; strongest predictive framing) |
 | ≤6mo | Samples with `month <= 6` (Month_1–Month_6) | Moderate prediction |
 | ≤12mo | Samples with `month <= 12` (Month_1–Month_12) | Mixed prediction/association |
 | All | All 785 samples | Association only |
@@ -95,6 +95,8 @@ subject_embedding = mean(sample_embeddings for that infant up to month m)
 **Critical requirement:** The model must be evaluated at the **infant (patient) level** with no subject leakage.
 
 This notebook first aggregates to **one row per patient per horizon**, then runs CV with `groups=patient_id` for safety and future-proofing.
+
+Note: after aggregation, `groups=patient_id` is redundant (one row per patient), but keeping it is a defensive guardrail against future refactors that might accidentally re-introduce leakage.
 
 ```python
 from sklearn.model_selection import StratifiedGroupKFold
@@ -274,12 +276,18 @@ At ≤3 months, only 3 Russian patients have samples. LOCO results for Russia at
 
 | Horizon | Framing |
 |---------|---------|
-| ≤3 months | Strongest "prediction" (with caveats) |
+| ≤3 months | Exploratory (high variance; strongest "prediction" framing with caveats) |
 | ≤6 months | Moderate prediction |
 | ≤12 months | Mixed prediction/association |
 | All | Association only |
 
 There is no clean boundary between "prediction" and "association" without onset timing data.
+
+### 6. Statistical Uncertainty at ≤3mo (Exploratory)
+
+At `≤3mo` there are only **44 patients**. With 5-fold CV, each test fold has roughly **~8–9 patients**, so fold-wise AUROC can vary substantially. Treat `≤3mo` results as exploratory unless you add statistical inference (e.g., bootstrap confidence intervals or permutation testing) to show performance is distinguishable from chance.
+
+Multiple horizons/metrics are reported in this baseline; interpret horizon comparisons as exploratory (no multiple-comparisons correction is applied here).
 
 ---
 
