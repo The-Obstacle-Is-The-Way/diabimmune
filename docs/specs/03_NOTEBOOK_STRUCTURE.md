@@ -57,13 +57,12 @@ That bundle should be sufficient to reproduce the baseline run on another machin
 0. Setup & Configuration
 1. Load Data
 2. Integrity Checks
-3. ANALYSIS 1: Association Baseline (All Samples)
-4. ANALYSIS 2: Horizon ≤3 months (Exploratory)
-5. ANALYSIS 3: Horizon ≤6 months
-6. ANALYSIS 4: Horizon ≤12 months
-7. LOCO Analysis (per viable horizon)
-8. Results Summary & Export
-9. Reproducibility Footer
+3. ANALYSIS 1–4: CV across horizons (≤3mo, ≤6mo, ≤12mo, all)
+4. LOCO Analysis (per viable horizon)
+5. Results Summary & Export
+6. Known Limitations (REQUIRED)
+7. Interpretation Guide (REQUIRED)
+8. Reproducibility Footer
 ```
 
 ---
@@ -84,6 +83,10 @@ import sys
 RANDOM_SEED = 42
 N_SPLITS_OUTER = 5
 HORIZONS = [None, 3, 6, 12]  # None = all samples (association baseline)
+
+# Horizon label formatting (use consistent format throughout)
+def horizon_label(m):
+    return "all" if m is None else f"≤{m}mo"
 
 # Paths
 # Note: `jupyter nbconvert --execute` runs with cwd set to the notebook's directory,
@@ -340,7 +343,53 @@ summary_df.to_csv(RESULTS_DIR / "cv_summary.csv", index=False)
 print("Results saved to results/")
 ```
 
-### 6) Reproducibility Footer
+### 6) Known Limitations (REQUIRED Markdown Cell)
+
+This cell MUST be present to ensure scientific transparency. Include:
+
+```markdown
+## Known Limitations
+
+**Onset timing is unknown.** The label is an *endpoint outcome* (eventual food allergy status), not a diagnosis at the time of sample collection. Any horizon may include post-onset samples for some infants.
+
+**Milk allergy can manifest very early.** Infants exposed to cow's milk protein via formula or breast milk can develop milk allergy in the first weeks of life. This weakens "pure prediction" claims even at ≤3 months.
+
+**Claim strength is a gradient, not a boundary:**
+- **≤3 months**: Strongest predictive framing (but still limited)
+- **≤6 months**: Moderate predictive framing
+- **≤12 months**: Mixed predictive/associative
+- **All samples**: Association only (includes post-onset samples)
+
+**Country confounding.** Allergy prevalence differs by country (FIN 49%, EST 38%, RUS 15%). LOCO analysis helps assess whether the model learns transferable microbiome signal vs country-specific batch effects.
+
+**Russia at ≤3 months.** Only 3 RUS patients at this horizon; LOCO results for RUS are not meaningful.
+```
+
+### 7) Interpretation Guide (REQUIRED Markdown Cell)
+
+Help readers understand what the numbers mean:
+
+```markdown
+## Interpretation Guide
+
+**AUROC interpretation:**
+- 0.50 = random chance (no signal)
+- 0.55–0.65 = weak signal
+- 0.65–0.75 = moderate signal
+- 0.75+ = strong signal
+
+**LOCO interpretation:**
+- If LOCO AUROC ≈ CV AUROC: Model learns transferable microbiome patterns
+- If LOCO AUROC << CV AUROC: Model may be exploiting country-specific effects
+- If LOCO AUROC < 0.50: Model fails to generalize to held-out country
+
+**What to look for:**
+1. Does AUROC decrease as horizon decreases? (Expected: less data = noisier estimates)
+2. Is ≤3mo AUROC still above chance? (Key question for "early prediction" claim)
+3. Do LOCO results hold up? (Country confounding check)
+```
+
+### 8) Reproducibility Footer
 
 ```python
 from datetime import datetime
