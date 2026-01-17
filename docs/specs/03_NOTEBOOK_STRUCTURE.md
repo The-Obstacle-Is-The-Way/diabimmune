@@ -277,28 +277,28 @@ for m in HORIZONS:
         X_train, y_train = X_subj[train_mask], y_subj[train_mask]
         X_test = X_subj[test_mask]
 
-    model = Pipeline([
-        ('scaler', StandardScaler()),
-        ('clf', LogisticRegression(
-            C=1.0,
-            class_weight='balanced',
-            solver='lbfgs',
-            max_iter=2000,
-            random_state=RANDOM_SEED
-        ))
-    ])
+        model = Pipeline([
+            ('scaler', StandardScaler()),
+            ('clf', LogisticRegression(
+                C=1.0,
+                class_weight='balanced',
+                solver='lbfgs',
+                max_iter=2000,
+                random_state=RANDOM_SEED
+            ))
+        ])
 
-    model.fit(X_train, y_train)
-    y_pred_proba = model.predict_proba(X_test)[:, 1]
+        model.fit(X_train, y_train)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
 
-    loco_results.append({
-        'horizon': horizon_label,
-        'held_out': held_out,
-        'n_train_subjects': len(y_train),
-        'n_test_subjects': len(y_test),
-        'auroc': roc_auc_score(y_test, y_pred_proba),
-        'auprc': average_precision_score(y_test, y_pred_proba)
-    })
+        loco_results.append({
+            'horizon': horizon_label,
+            'held_out': held_out,
+            'n_train_subjects': len(y_train),
+            'n_test_subjects': len(y_test),
+            'auroc': roc_auc_score(y_test, y_pred_proba),
+            'auprc': average_precision_score(y_test, y_pred_proba)
+        })
 
 loco_df = pd.DataFrame(loco_results)
 print(loco_df)

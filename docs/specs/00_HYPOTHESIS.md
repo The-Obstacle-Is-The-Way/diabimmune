@@ -66,16 +66,29 @@ For each horizon:
 
 ---
 
-## Track A Sample Counts (Verified)
+## Track A Counts (Verified)
 
 Counts are computed from `data/processed/longitudinal_wgs_subset/Month_*.csv` with `month` taken from the filename.
 
-| Horizon | Samples | Patients | Label=0 | Label=1 | Notes |
-|---------|---------|----------|---------|---------|------|
-| ≤3 months | 45 | 44 | 23 | 22 | Only 3 RUS samples (LOCO for RUS not meaningful) |
-| ≤6 months | 110 | 92 | 58 | 52 | Viable class balance |
-| ≤12 months | 307 | 160 | 203 | 104 | Viable |
-| All | 785 | 212 | 527 | 258 | Association baseline |
+**Patient-level counts** (CV unit — one row per infant after aggregation):
+
+| Horizon | Samples | Patients | Healthy (0) | Allergic (1) | Notes |
+|---------|---------|----------|-------------|--------------|-------|
+| ≤3 months | 45 | 44 | 23 | 21 | Only 3 RUS patients (LOCO for RUS not meaningful) |
+| ≤6 months | 110 | 92 | 51 | 41 | Viable class balance (~55:45) |
+| ≤12 months | 307 | 160 | 101 | 59 | Viable (~63:37) |
+| All | 785 | 212 | 144 | 68 | Association baseline (~68:32) |
+
+**Country distribution (patient-level):**
+
+| Horizon | FIN | EST | RUS |
+|---------|-----|-----|-----|
+| ≤3 months | 24 | 17 | 3 |
+| ≤6 months | 39 | 31 | 22 |
+| ≤12 months | 56 | 48 | 56 |
+| All | 71 | 71 | 70 |
+
+Note: RUS patients are predominantly healthy (62 healthy vs 8 allergic overall), which affects LOCO interpretability.
 
 ---
 

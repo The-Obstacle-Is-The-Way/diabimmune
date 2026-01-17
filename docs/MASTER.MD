@@ -178,14 +178,14 @@ Notes:
    - Addresses country confounding (FIN 49% vs RUS 15% allergy rate)
 
 2. **Cumulative horizon analysis:** Evaluate early-life signal using cumulative cutoffs (not disjoint bins)
-   - Horizons: `month <= 3`, `month <= 6`, `month <= 12`, plus “all samples”
+   - Horizons: `month <= 3`, `month <= 6`, `month <= 12`, plus "all samples"
    - Required procedure: filter to horizon, aggregate to 1 row per infant (mean embedding), then run CV/LOCO
-   - Interpretation: earlier horizons support stronger “prediction” framing; later horizons are increasingly confounded by unknown onset timing
-   - Track A horizon sizes (verified):
-     - `month <= 3`: 45 samples / 44 patients
-     - `month <= 6`: 110 samples / 92 patients
-     - `month <= 12`: 307 samples / 160 patients
-     - all: 785 samples / 212 patients
+   - Interpretation: earlier horizons support stronger "prediction" framing; later horizons are increasingly confounded by unknown onset timing
+   - Track A horizon sizes (verified, patient-level class balance in parentheses):
+     - `month <= 3`: 45 samples / 44 patients (23 healthy, 21 allergic)
+     - `month <= 6`: 110 samples / 92 patients (51 healthy, 41 allergic)
+     - `month <= 12`: 307 samples / 160 patients (101 healthy, 59 allergic)
+     - all: 785 samples / 212 patients (144 healthy, 68 allergic)
 
 See `docs/specs/04_EVALUATION.md` for implementation details.
 

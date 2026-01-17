@@ -93,8 +93,9 @@ At `month <= 3`, Russia has too few samples/patients for meaningful LOCO testing
 
 From `data/processed/longitudinal_wgs_subset/`:
 - **785 samples / 212 patients**
-- Sample labels: ~258 positive (~33%) / ~527 negative (~67%)
-- Country distribution: FIN 281 (49% allergic), EST 199 (38%), RUS 305 (15%)
+- **Patient-level labels (CV unit):** 68 allergic (32%) / 144 healthy (68%)
+- Sample-level labels: 258 positive / 527 negative
+- Country distribution (patients): FIN 71, EST 71, RUS 70 (but RUS is 62 healthy vs 8 allergic)
 
 ### Track B: 16S OTU (Future)
 
