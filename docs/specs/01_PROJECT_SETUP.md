@@ -47,10 +47,11 @@ scripts/
 data/
   raw/                       # source data (checked into this repo)
   processed/
-    16s/                     # primary processed artifacts
+    16s/                     # Track B: 16S processed artifacts
+    hf_legacy/               # Track A: HF embeddings + legacy metadata
+    longitudinal_wgs_subset/ # Track A: corrected Month_*.csv metadata
 _reference/                  # untracked reference data
   greengenes/                # Greengenes 13_8 (downloaded)
-  hf_legacy/                 # deprecated HuggingFace data
   Microbiome-Modelling/      # reference model code
 docs/
   specs/                     # these files

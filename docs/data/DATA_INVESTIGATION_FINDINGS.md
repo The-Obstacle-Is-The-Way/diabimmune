@@ -1,10 +1,11 @@
 # Data Investigation Findings
 
-**Date**: 2026-01-15
-**Status**: Legacy HuggingFace subset resolved (canonical embeddings + ground-truth metadata)
+**Date**: 2026-01-15 (updated 2026-01-17)
+**Status**: Two-track approach established
 
-**Note**: The primary project direction is now the full 16S OTU dataset + food-allergy-only labels.
-See `docs/MASTER.MD` and `scripts/prepare_16s_dataset.py`.
+**Current Focus**: Track A baseline using HF embeddings + Ludo's corrected metadata (785 samples).
+
+See `docs/MASTER.MD` for the two-track overview.
 
 ---
 
@@ -135,20 +136,21 @@ subjectID = T012374 (from RData)
 
 ## What We Created (Processed Data)
 
-To make this usable, we created:
+### Track A: HF Embeddings + Ludo's Corrected Metadata
 
-### `data/processed/hf_legacy/unified_samples.csv`
-The "clean" dataset with everything linked:
-```csv
-srs_id,gid_wgs,subject_id,collection_month,age_days,country,label
-SRS1719087,G69146,E016030,28.0,848.0,EST,0
-```
+**Ludo's corrected metadata** (2026-01-16):
+- `data/processed/longitudinal_wgs_subset/Month_*.csv`
+- Columns: `sid, patient_id, country, label, allergen_class`
+- Each sample appears in exactly ONE month (fixed leakage)
+- Labels are eventual outcome (not status at collection)
 
-### `data/processed/hf_legacy/srs_to_subject_mapping.csv`
-Just the ID mapping for reference.
+**Embeddings** (from HuggingFace):
+- `data/processed/hf_legacy/microbiome_embeddings_100d.h5`
+- 785 samples, 100-dim float32 vectors, keyed by SRS ID
 
-### `data/processed/hf_legacy/microbiome_embeddings_100d.h5`
-A single canonical embedding file (one 100-d vector per SRS, 785 keys) created by selecting, for each sample, the vector from `Month_{collection_month}` where `collection_month` is taken from the RData ground truth.
+**Legacy files** (kept for reference, may be redundant):
+- `data/processed/hf_legacy/unified_samples.csv` — older metadata merge
+- `data/processed/hf_legacy/srs_to_subject_mapping.csv` — ID mapping
 
 ---
 
@@ -166,7 +168,7 @@ A single canonical embedding file (one 100-d vector per SRS, 785 keys) created b
 - We're trusting embeddings we didn't generate
 
 ### What's Bad ❌
-- Provenance is non-trivial (HF snapshot + SRA bridge), but is now reproducible via `scripts/prepare_hf_legacy.py`
+- Provenance is non-trivial (HF snapshot + SRA bridge); inputs/outputs are captured in `data/processed/hf_legacy/dataset_manifest.json` (no reproduction script is checked in)
 - Complex mapping chain with external dependency (SRA)
 - Can't verify embedding quality without regenerating
 
@@ -226,10 +228,13 @@ The embeddings themselves are probably fine - they come from a real model (ProkB
 
 ---
 
-## Missing: Provenance Script
+## Provenance Notes
 
-This repo includes a single reproducible entrypoint script (`scripts/prepare_hf_legacy.py`) that:
-- downloads the HF embeddings at a pinned revision (or uses local files),
-- rebuilds `data/processed/hf_legacy/srs_to_subject_mapping.csv` and `data/processed/hf_legacy/unified_samples.csv` from the RData + SRA runinfo,
-- exports `microbiome_embeddings_100d.h5`,
-- validates row/subject counts and key alignment.
+**Track A data provenance:**
+- Embeddings: HuggingFace `hugging-science/AI4FA-Diabimmune` (revision `7761eea93dad5712a03452786b43031dc9b04233`)
+- Metadata: Ludo's preprocessing branch (https://github.com/AI-For-Food-Allergies/gut_microbiome_project/tree/diab-preprocessing)
+- Fixes applied: sample-month leakage, eventual outcome labels, deduplication
+
+**Track B data provenance:**
+- Raw data: DIABIMMUNE Broad Institute portal
+- Processed by: `scripts/prepare_16s_dataset.py`

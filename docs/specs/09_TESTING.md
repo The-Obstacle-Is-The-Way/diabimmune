@@ -19,6 +19,15 @@ Tests should verify:
 - `otus_greengenes_ids.csv` has 2,005 unique OTU IDs
 - label is constant within each subject
 
+### Notebook invariants (required once notebooks exist)
+
+The baseline notebook is designed to be **assertion-driven**:
+- Inline `assert` statements are the notebook’s primary “tests” (fail fast if invariants break).
+- The notebook should run top-to-bottom without edits; assertions must pass for a “green” run.
+
+Optional (later, once `notebooks/01_food_allergy_baseline.ipynb` exists):
+- Add `nbmake` to execute the notebook under `pytest` so CI can enforce that the inline assertions keep passing.
+
 ### Ground-truth property (required)
 
 From `DIABIMMUNE_Karelia_metadata.RData`:

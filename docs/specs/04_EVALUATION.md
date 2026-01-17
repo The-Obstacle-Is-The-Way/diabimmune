@@ -6,9 +6,12 @@ Scientifically valid evaluation for a longitudinal cohort:
 - no **subject leakage**,
 - no **time leakage** (when claiming early prediction),
 - robust to **class imbalance**,
-- explicit about **country confounding**.
+- explicit about **country confounding**,
+- **reproducible** (consistent seeds across all folds).
 
-Primary dataset: `data/processed/16s/*` (food allergies only).
+Applies to both datasets:
+- **Track A**: `data/processed/longitudinal_wgs_subset/` + `data/processed/hf_legacy/` (785 samples / 212 patients)
+- **Track B**: `data/processed/16s/*` (1,450 samples / 203 subjects)
 
 ---
 
@@ -32,36 +35,143 @@ Fix:
 
 ---
 
-## Dataset Counts (Food Allergy Only)
+## Dataset Counts
+
+### Track A: HF Embeddings (Baseline)
+
+From `data/processed/longitudinal_wgs_subset/`:
+- **785 samples / 212 patients**
+- Sample labels: ~258 positive (~33%) / ~527 negative (~67%)
+- Country distribution: FIN 281 (49% allergic), EST 199 (38%), RUS 305 (15%)
+
+### Track B: 16S OTU (Future)
 
 From `data/processed/16s/dataset_manifest.json`:
-- **1,450 labeled 16S samples**
-- **203 labeled subjects**
-- Sample labels: **491 positive / 959 negative**
-- Subject labels: **72 positive / 131 negative**
+- **1,450 samples / 203 subjects**
+- Sample labels: 491 positive / 959 negative
+- Subject labels: 72 positive / 131 negative
 
 ---
 
-## Cross-Validation
+## Reproducibility: Seed Policy
 
-### Primary: StratifiedGroupKFold (subject-level)
+**Global seed**: `RANDOM_SEED = 42`
+
+All random operations must use this seed:
+- `StratifiedGroupKFold(shuffle=True, random_state=RANDOM_SEED)`
+- `train_test_split(..., random_state=RANDOM_SEED)`
+- Any model with randomness: `LogisticRegression(..., random_state=RANDOM_SEED)`
+- NumPy: `np.random.seed(RANDOM_SEED)` at notebook start
+
+This ensures:
+- Same fold assignments across runs
+- Same model initialization
+- Reproducible results
+
+---
+
+## Cross-Validation Structure
+
+### Baseline: Outer CV Only
+
+For the baseline notebook with fixed hyperparameters, **only outer CV is needed**:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ OUTER LOOP: 5-fold StratifiedGroupKFold                     │
+│   Purpose: Estimate generalization performance              │
+│   Groups: patient_id                                        │
+│                                                             │
+│   For each fold:                                            │
+│     1. Train LogReg with fixed hyperparams on train set     │
+│     2. Evaluate on test set (truly unseen)                  │
+│     3. Record metrics                                       │
+│                                                             │
+│   Result: Unbiased performance estimate (mean ± std)        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why this is sufficient:**
+- No hyperparameter tuning = no selection bias = no inner loop needed
+- Fixed hyperparameters (`C=1.0, class_weight='balanced'`) are reasonable defaults for LogReg
+- Outer CV alone gives unbiased generalization estimates
+
+### Baseline Implementation
 
 ```python
 from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import roc_auc_score
 
-cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+RANDOM_SEED = 42
+outer_cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
+
+cv_results = []
+for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y, groups=patient_ids)):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+
+    # Fixed hyperparameters - no tuning, no inner loop
+    model = Pipeline([
+        ('scaler', StandardScaler()),
+        ('clf', LogisticRegression(
+            C=1.0,
+            class_weight='balanced',
+            solver='lbfgs',
+            max_iter=2000,
+            random_state=RANDOM_SEED
+        ))
+    ])
+    model.fit(X_train, y_train)
+
+    # Evaluate on truly unseen test fold
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    cv_results.append({'fold': fold_idx, 'auroc': roc_auc_score(y_test, y_pred_proba)})
+
+# Report: mean ± std across folds
 ```
 
-Notes:
-- Stratification uses `y` (label_food) and grouping uses `subject_id`.
-- With small horizons/months, `n_splits=5` may be infeasible. Use dynamic `n_splits`.
+---
+
+### Optional: Nested CV (Only If Hyperparameter Tuning Is Needed)
+
+**This section is OPTIONAL. The baseline does NOT need this.**
+
+If you later want to tune hyperparameters AND get unbiased performance estimates, you must use nested CV. This is the only correct way to both tune and evaluate.
+
+**Why nested CV?**
+- GridSearchCV alone on full data → hyperparams selected by seeing ALL data → optimistically biased estimates
+- Nested CV → outer test folds are genuinely unseen during hyperparam selection → unbiased
+
+```python
+# ONLY if hyperparameter tuning is needed
+from sklearn.model_selection import GridSearchCV
+
+for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y, groups=patient_ids)):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+    groups_train = patient_ids[train_idx]
+
+    # Inner CV for hyperparam selection (only on training data)
+    inner_cv = StratifiedGroupKFold(n_splits=3, shuffle=True, random_state=RANDOM_SEED)
+    param_grid = {'clf__C': [0.01, 0.1, 1.0, 10.0]}
+
+    grid_search = GridSearchCV(model, param_grid, cv=inner_cv, scoring='roc_auc')
+    grid_search.fit(X_train, y_train, groups=groups_train)  # groups= is CRITICAL
+
+    # Evaluate on outer test fold (truly unseen)
+    y_pred_proba = grid_search.predict_proba(X_test)[:, 1]
+```
+
+**Critical**: Inner CV must use `groups=groups_train` to maintain subject-level splits.
 
 ### Dynamic n_splits
 
-```python
-import numpy as np
-from sklearn.model_selection import StratifiedGroupKFold
+For small datasets or per-month analyses:
 
+```python
 def choose_n_splits(y_subj: np.ndarray, n_splits_max: int = 5) -> int:
     n_pos = int((y_subj == 1).sum())
     n_neg = int((y_subj == 0).sum())
@@ -99,22 +209,85 @@ Secondary:
 
 ## Country Confounding
 
-Food allergy prevalence differs strongly by country in this cohort.
+Food allergy prevalence differs strongly by country:
 
-Required analysis:
-- **Leave-one-country-out (LOCO)**: train on 2 countries, test on the held-out country.
-- Report AUROC per held-out country (and per horizon if doing time-aware evaluation).
+| Country | Track A Samples | Allergy Rate |
+|---------|-----------------|--------------|
+| FIN | 281 | 49% |
+| EST | 199 | 38% |
+| RUS | 305 | 15% |
 
-Tip: Use `data/processed/16s/dataset_manifest.json` to inspect subject counts by country and label.
+A model could learn "is this sample from Russia?" instead of "does this microbiome pattern predict allergy?".
+
+### Leave-One-Country-Out (LOCO)
+
+Required secondary analysis:
+
+```python
+countries = ['FIN', 'EST', 'RUS']
+loco_results = []
+
+for held_out in countries:
+    train_mask = df['country'] != held_out
+    test_mask = df['country'] == held_out
+
+    X_train, y_train = X[train_mask], y[train_mask]
+    X_test, y_test = X[test_mask], y[test_mask]
+
+    model.fit(X_train, y_train)
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+
+    loco_results.append({
+        'held_out': held_out,
+        'n_test': len(y_test),
+        'auroc': roc_auc_score(y_test, y_pred_proba)
+    })
+```
+
+**Interpretation:**
+- If LOCO AUROC >> 0.5: Model learns transferable microbiome signal
+- If LOCO AUROC ≈ 0.5: Model may be learning country-specific batch effects
+
+---
+
+## Class Imbalance Handling
+
+With ~33% positive class, use:
+
+1. **`class_weight='balanced'`** in classifiers
+2. **AUPRC** (Area Under Precision-Recall Curve) as secondary metric alongside AUROC
+3. **Stratified folds** to maintain class ratio in each fold
+
+Do NOT use:
+- Accuracy (misleading with imbalance)
+- Oversampling/SMOTE (adds complexity without clear benefit for this ratio)
 
 ---
 
 ## Reporting Template
 
-Minimum output tables:
-- `results/metrics_by_horizon.csv`
-- `results/metrics_loco.csv`
+### Output Tables
 
-Minimum plots:
-- AUROC vs horizon month (mean ± std across folds)
-- LOCO AUROC bars by country
+- `results/cv_metrics.csv` — per-fold AUROC, AUPRC, F1
+- `results/cv_summary.csv` — mean ± std across folds
+- `results/loco_metrics.csv` — AUROC per held-out country
+
+### Output Plots
+
+- ROC curves (per-fold + mean)
+- Precision-Recall curves (per-fold + mean)
+- LOCO AUROC bar chart by country
+- (Optional) AUROC vs horizon month if doing time analysis
+
+### Reproducibility Footer
+
+Every notebook must end with:
+
+```python
+print(f"Random seed: {RANDOM_SEED}")
+print(f"Python: {sys.version}")
+print(f"NumPy: {np.__version__}")
+print(f"pandas: {pd.__version__}")
+print(f"scikit-learn: {sklearn.__version__}")
+print(f"Run completed: {datetime.now().isoformat()}")
+```

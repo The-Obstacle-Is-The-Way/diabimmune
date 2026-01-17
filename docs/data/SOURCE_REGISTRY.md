@@ -1,6 +1,6 @@
 # Source Registry (Provenance)
 
-**Last updated**: 2026-01-16
+**Last updated**: 2026-01-17
 
 This file is the single “source of truth” registry for external inputs and reference materials.
 It complements the machine-readable manifests written by pipeline scripts under `data/processed/**/dataset_manifest.json`.
@@ -100,19 +100,42 @@ Optional page snapshot hash (sha256 of fetched HTML): `0d74a552600b75562aa31fe14
 
 ---
 
-## HuggingFace Legacy Embeddings Dataset (DEPRECATED)
+## Track A: HuggingFace Embeddings + Ludo's Corrected Metadata
 
-**Status**: Moved to `_reference/hf_legacy/` (untracked). Do not use for food-allergy-only experiments.
+**Status**: Active baseline dataset. Located at `data/processed/`.
+
+### HuggingFace Embeddings Source
 
 Dataset:
 - https://huggingface.co/datasets/hugging-science/AI4FA-Diabimmune
 
-Pinned dataset revision (historical reference only):
+Pinned dataset revision:
 - `7761eea93dad5712a03452786b43031dc9b04233`
 
-Why deprecated:
+Local file:
+- `data/processed/hf_legacy/microbiome_embeddings_100d.h5`
+  - 785 samples, 100-dim float32 vectors
+  - Keys are SRS IDs
+
+### Ludo's Corrected Metadata
+
+Source:
+- https://github.com/AI-For-Food-Allergies/gut_microbiome_project/tree/diab-preprocessing
+
+Preprocessing fixes (2026-01-16):
+- Sample-month leakage fixed (each sample in exactly one month)
+- Labels are eventual outcome (not status at collection)
+- Deduplication applied
+- Food-allergy-only labels via `allergen_class`
+
+Local files:
+- `data/processed/longitudinal_wgs_subset/Month_*.csv`
+  - 35 files, 785 samples total
+  - Columns: `sid, patient_id, country, label, allergen_class`
+
+### Known Limitations
+
 - Only 785 WGS-keyed samples (not full 1,584 16S)
-- Broken Month_* structure in upstream
-- Label is `any(allergy_*) | totalige_high` (not food-only)
-- Embedding provenance unclear
+- Embedding generation method not fully documented
+- Original HF Month_* structure was broken (fixed by Ludo)
 

@@ -81,8 +81,33 @@ Contains:
 
 ---
 
-## Legacy Processed Dataset (HuggingFace Subset — DEPRECATED)
+## Track A: HF Embeddings + Ludo's Corrected Metadata
 
-**Status**: Moved to `_reference/hf_legacy/` (untracked).
+### `data/processed/longitudinal_wgs_subset/Month_*.csv`
 
-These artifacts are intentionally **not** used for "food allergy only" experiments. They exist only for historical reference and have unclear embedding provenance.
+- 35 files: `Month_1.csv` through `Month_38.csv` (not all months exist)
+- Rows: **785** samples total across all files
+- Columns:
+  - `sid`: `str` (unique SRS ID; join key with embeddings)
+  - `patient_id`: `str` (use for GroupKFold grouping)
+  - `country`: `str` in `{FIN, EST, RUS}`
+  - `label`: `int` in `{0, 1}` (binary food allergy)
+  - `allergen_class`: `int` in `{0, 1, 2, 3, 4}` (multi-class, see 07_OUTCOME_DEFINITION.md)
+
+Invariants:
+- Each `sid` appears in exactly ONE file (no cross-month leakage)
+- `label` is constant within each `patient_id` (eventual outcome)
+- `label = 1` iff `allergen_class > 0`
+
+### `data/processed/hf_legacy/microbiome_embeddings_100d.h5`
+
+- HDF5 file
+- Keys: **785** SRS IDs (e.g., `SRS1719259`)
+- Values: `(100,)` `float32` vectors
+
+Alignment invariant:
+- All `sid` values in `Month_*.csv` files exist as keys in this H5 file
+
+### `data/processed/hf_legacy/unified_samples.csv` (Legacy Reference)
+
+Older metadata merge kept for reference. Use `longitudinal_wgs_subset/` for modeling.

@@ -54,22 +54,26 @@ uv run python3 scripts/prepare_16s_dataset.py --force
 
 ---
 
-## Legacy: HuggingFace Embeddings Subset (DEPRECATED)
+## Track A: HuggingFace Embeddings Subset (Baseline)
 
-**Status**: Moved to `_reference/hf_legacy/` (untracked). Do not use for "food allergy only" experiments.
+**Status**: Active baseline dataset for quick modeling (WGS-keyed subset; not the full 16S cohort).
 
-This subset existed for back-compat with the earlier HF investigation but is now deprecated.
+### Artifacts (as tracked in this repo)
 
-### Legacy artifacts (if present locally in `_reference/hf_legacy/`)
+Embeddings (from HuggingFace):
+- `data/processed/hf_legacy/microbiome_embeddings_100d.h5` — 785 samples, 100-dim float32 vectors keyed by SRS ID
 
-- `unified_samples.csv`
-- `microbiome_embeddings_100d.h5`
-- `srs_to_subject_mapping.csv`
-- `dataset_manifest.json`
+Corrected metadata (for food-allergy-only labels + month files):
+- `data/processed/longitudinal_wgs_subset/Month_*.csv` — 35 files, 785 samples total
+  - Columns: `sid, patient_id, country, label, allergen_class`
 
-### Why deprecated
+Reference/traceability (do not use the label column here for food-only experiments):
+- `data/processed/hf_legacy/unified_samples.csv`
+- `data/processed/hf_legacy/srs_to_subject_mapping.csv`
+- `data/processed/hf_legacy/dataset_manifest.json`
 
-- Upstream HuggingFace Month_* structure is broken (not reliable collection month).
-- Upstream label is `any(allergy_*) | totalige_high` (not food-only).
-- Embedding provenance is unclear (unknown model/method).
-- Only 785 samples (WGS-keyed subset), not full 1,584 16S samples.
+### Known limitations / gotchas
+
+- This is a **785-sample WGS-keyed subset**, not the full 1,584-sample 16S cohort.
+- The original HF dataset’s Month_* organization and labels are not reliable for “food allergy only”; use `longitudinal_wgs_subset/Month_*.csv` for labels and months.
+- Upstream embedding generation is not fully documented; treat embeddings as a black-box representation unless regenerated.

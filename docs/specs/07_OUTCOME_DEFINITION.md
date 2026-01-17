@@ -2,10 +2,12 @@
 
 ## Goal
 
-Define a binary “food allergy development” target that is:
-- derived from the DIABIMMUNE RData ground truth,
+Define a binary "food allergy development" target that is:
+- derived from the DIABIMMUNE ground truth,
 - leakage-safe,
 - explicit about missingness.
+
+Applies to both tracks (with different source files).
 
 ---
 
@@ -63,10 +65,51 @@ label_food_sample(i) = label_food(s(i))
 
 ---
 
+## Track A: allergen_class Encoding (Ludo's Metadata)
+
+In `data/processed/longitudinal_wgs_subset/Month_*.csv`, the label is encoded as:
+
+| Column | Meaning |
+|--------|---------|
+| `label` | Binary: 0 = no food allergy, 1 = has food allergy |
+| `allergen_class` | Multi-class encoding (see below) |
+
+**allergen_class values:**
+
+| Value | Meaning |
+|-------|---------|
+| 0 | No food allergy |
+| 1 | Milk allergy only |
+| 2 | Egg allergy only |
+| 3 | Peanut allergy only |
+| 4 | Multiple food allergies |
+
+**Relationship:**
+```python
+label = 1 if allergen_class > 0 else 0
+```
+
+**Note:** This is **eventual outcome** (endpoint allergy status), not status at sample collection time. Ludo fixed this in the 2026-01-16 preprocessing update.
+
+---
+
 ## Modeling Unit (Strong Recommendation)
 
 Because each subject has multiple samples, evaluation must be **subject-level**:
-- CV grouping: `groups = subject_id`
+- CV grouping: `groups = patient_id` (Track A) or `groups = subject_id` (Track B)
 - If doing time-horizon analysis: aggregate to 1 row per subject per horizon (mean or last sample up to horizon)
 
 See `docs/specs/04_EVALUATION.md`.
+
+---
+
+## Label Consistency Verification
+
+Before modeling, verify labels are consistent per patient:
+
+```python
+labels_per_patient = df.groupby("patient_id")["label"].nunique()
+assert (labels_per_patient == 1).all(), "Inconsistent labels within patient!"
+```
+
+This should always pass because labels are subject-level (eventual outcome), not time-varying.
