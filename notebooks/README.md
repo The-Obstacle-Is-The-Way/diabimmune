@@ -17,13 +17,13 @@ data/processed/hf_legacy/microbiome_embeddings_100d.h5  # 100-dim embeddings
 
 # Run the notebook:
 cd notebooks/
-jupyter nbconvert --execute 01_food_allergy_baseline.ipynb --to html
+uv run jupyter nbconvert --execute 01_food_allergy_baseline.ipynb --to html
 ```
 
-**Outputs** (committed for reproducibility):
-- `results/cv_metrics.csv` — per-fold AUROC, AUPRC, F1 by horizon
-- `results/cv_summary.csv` — mean ± std across folds
-- `results/loco_metrics.csv` — Leave-One-Country-Out results
+**Outputs** (committed for reproducibility; written to `notebooks/results/`):
+- `notebooks/results/cv_metrics.csv` — per-fold AUROC, AUPRC, F1 by horizon
+- `notebooks/results/cv_summary.csv` — mean ± std across folds
+- `notebooks/results/loco_metrics.csv` — Leave-One-Country-Out results
 
 ---
 
@@ -61,9 +61,9 @@ We analyze **cumulative time windows**, not month-by-month or disjoint bins:
 
 | Horizon | Data Used | Claim Strength |
 |---------|-----------|----------------|
-| ≤3 months | Samples from months 0-3 | Strongest "prediction" framing |
-| ≤6 months | Samples from months 0-6 | Moderate prediction |
-| ≤12 months | Samples from months 0-12 | Mixed prediction/association |
+| ≤3mo | Samples with `month <= 3` (Month_1–Month_3) | Strongest "prediction" framing |
+| ≤6mo | Samples with `month <= 6` (Month_1–Month_6) | Moderate prediction |
+| ≤12mo | Samples with `month <= 12` (Month_1–Month_12) | Mixed prediction/association |
 | All | All 785 samples | Association only |
 
 **Why cumulative horizons?**
@@ -92,14 +92,21 @@ subject_embedding = mean(sample_embeddings for that infant up to month m)
 
 ### 3. Leakage-Safe Cross-Validation
 
-**Critical requirement:** All samples from the same infant must stay together (all in train OR all in test, never split).
+**Critical requirement:** The model must be evaluated at the **infant (patient) level** with no subject leakage.
+
+This notebook first aggregates to **one row per patient per horizon**, then runs CV with `groups=patient_id` for safety and future-proofing.
 
 ```python
 from sklearn.model_selection import StratifiedGroupKFold
 
+subj = build_subject_table(df_h)  # one row per patient
+X = np.stack(subj["embedding"].to_list())
+y = subj["label"].to_numpy()
+groups = subj["patient_id"].to_numpy()
+
 cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
-for train_idx, test_idx in cv.split(X, y, groups=patient_ids):
-    # All samples from each patient are in train OR test, never both
+for train_idx, test_idx in cv.split(X, y, groups=groups):
+    # Each patient is in train OR test, never both
 ```
 
 **What would go wrong without this?**
@@ -109,7 +116,16 @@ for train_idx, test_idx in cv.split(X, y, groups=patient_ids):
 
 ### 4. Fixed Hyperparameters (No Tuning)
 
-The baseline uses fixed hyperparameters:
+The baseline model is a scikit-learn `Pipeline`:
+
+```python
+Pipeline([
+    ("scaler", StandardScaler()),
+    ("clf", LogisticRegression(...)),
+])
+```
+
+The baseline uses fixed hyperparameters (no tuning):
 
 ```python
 LogisticRegression(
@@ -155,6 +171,16 @@ A model could learn "is this from Russia?" instead of "does this microbiome patt
 - Train on 2 countries, test on the held-out country
 - If LOCO AUROC ≈ CV AUROC: model learns transferable patterns
 - If LOCO AUROC << CV AUROC: model may exploit country-specific batch effects
+
+**Edge cases (handled in code):**
+- AUROC is undefined if the held-out test set has only one class → those rows are skipped.
+- Russia at ≤3mo is explicitly skipped (too few patients and no positives).
+
+### 6. Metrics
+
+- **Primary**: AUROC (subject-level)
+- **Secondary**: AUPRC and F1 (F1 uses a fixed 0.5 threshold on predicted probability)
+- **LOCO outputs**: AUROC and AUPRC (no F1)
 
 ---
 
@@ -312,4 +338,4 @@ notebooks/
 - Vatanen et al. (2016) "Variation in Microbiome LPS Immunogenicity Contributes to Autoimmunity in Humans" — *Cell*
 
 ### Embedding Model
-- Based on ProkBERT (16S rRNA embeddings) + MicrobiomeTransformer aggregation
+- Track A uses **precomputed** 100‑dim embeddings from HuggingFace: `hugging-science/AI4FA-Diabimmune` (keys are SRS IDs). The embedding generation method is treated as an external/legacy artifact for this baseline; see `docs/data/SOURCE_REGISTRY.md`.
