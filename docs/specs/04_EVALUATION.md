@@ -1,589 +1,346 @@
 # 04: Evaluation Strategy
 
-## Overview
+## Goal
 
-Detailed specification of the evaluation methodology to ensure scientifically valid, reproducible results without data leakage.
+Scientifically valid evaluation for a longitudinal cohort:
+- no **subject leakage**,
+- no **time leakage** (when claiming early prediction),
+- robust to **class imbalance**,
+- explicit about **country confounding**,
+- **reproducible** (consistent seeds across all folds).
 
----
-
-## The Data Leakage Problem
-
-### Why Random Splits Fail
-
-In longitudinal studies like DIABIMMUNE, each infant has multiple stool samples across different months. If we randomly split samples:
-
-```
-❌ Random Split (WRONG):
-   Subject_001: Month 1 → Train, Month 3 → Test, Month 6 → Train
-   Subject_002: Month 2 → Train, Month 6 → Test
-
-   Problem: Model sees Subject_001's Month 1 & 6 during training,
-            then "predicts" Month 3 — but it's memorizing the infant,
-            not learning the microbiome signal.
-```
-
-### Why Subject-Level Splits Work
-
-```
-✅ Subject-Level Split (CORRECT):
-   Train: All samples from Subject_001, Subject_002, Subject_003
-   Test:  All samples from Subject_004, Subject_005
-
-   Result: Model must generalize to unseen infants,
-           which is what we want in clinical deployment.
-```
+Applies to both datasets:
+- **Track A**: `data/processed/longitudinal_wgs_subset/` + `data/processed/hf_legacy/` (785 samples / 212 patients)
+- **Track B**: `data/processed/16s/*` (1,450 samples / 203 subjects)
 
 ---
 
-## Cross-Validation Strategy
+## Leakage Risks
 
-### StratifiedGroupKFold
+### Subject leakage (must prevent)
 
-Combines two critical requirements:
+Multiple samples per infant mean random sample-splitting is invalid.
 
-| Requirement | How It's Met |
-|-------------|--------------|
-| **No leakage** | `groups=subject_ids` keeps all samples from one infant together |
-| **Class balance** | Stratification maintains ~42/58 allergic/healthy ratio (sample-level; subject-level is 90/122) |
+Fix:
+- `groups = subject_id`
+- split with `StratifiedGroupKFold`
 
-### Implementation
+### Time leakage (must prevent for “predict by month m”)
+
+If the claim is “predict by month m”, you must not use samples with `collection_month > m` anywhere in training or evaluation.
+
+Notes on column names:
+- Track A notebook uses `month` derived from the `Month_N.csv` filename.
+- Track B uses `collection_month` from `samples_food_allergy.csv`.
+
+Fix:
+- filter to `month <= m` (Track A) or `collection_month <= m` (Track B)
+- aggregate to **one row per subject** (mean or last sample up to m)
+
+---
+
+## Horizon Analysis (Prediction vs Association)
+
+This project does **cumulative horizons**, not disjoint “month bins”:
+- ✅ Use `month <= m` (e.g., `m ∈ {3, 6, 12}`) plus an “all samples” baseline
+- ❌ Do not run “months 7–12 only”, “13–24 only”, etc. (answers a different question and is typically underpowered)
+
+Why horizons matter:
+- The Track A label is an **endpoint outcome** repeated across all samples for an infant.
+- Later samples are more likely to be post-onset / post-management → higher risk of reverse causation.
+- Without onset timing, horizons represent **gradations of claim strength**, not a perfect prediction/association boundary.
+
+### Track A Horizon Set (Baseline Notebook)
+
+Use these four horizons:
+- `month <= 3` (exploratory “earliest window”)
+- `month <= 6` (early-life)
+- `month <= 12` (first year; mixed pre/post onset)
+- `all samples` (association baseline)
+
+Counts and caveats live in `docs/specs/00_HYPOTHESIS.md`.
+
+### Required Aggregation (One Row Per Subject Per Horizon)
+
+For each horizon, build a **subject table** with one embedding per infant:
+
+```python
+# df columns (Track A notebook): sid, patient_id, country, label, month, embedding
+df_h = df[df["month"] <= m]  # for m in {3, 6, 12}
+
+def mean_embedding(vectors: pd.Series) -> np.ndarray:
+    return np.mean(np.stack(vectors.to_list(), axis=0), axis=0)
+
+X_subj = np.stack(df_h.groupby("patient_id")["embedding"].apply(mean_embedding).to_list())
+y_subj = df_h.groupby("patient_id")["label"].first().to_numpy()
+country_subj = df_h.groupby("patient_id")["country"].first().to_numpy()
+patient_ids = df_h.groupby("patient_id").size().index.to_numpy()
+```
+
+Then evaluate:
+- CV: `StratifiedGroupKFold(...).split(X_subj, y_subj, groups=patient_ids)`
+- LOCO: train on 2 countries, test on held-out country **within the same horizon**
+
+### LOCO Viability Note
+
+At `month <= 3`, Russia has too few samples/patients for meaningful LOCO testing. Skip (or label as “not meaningful”) rather than over-interpreting.
+
+---
+
+## Dataset Counts
+
+### Track A: HF Embeddings (Baseline)
+
+From `data/processed/longitudinal_wgs_subset/`:
+- **785 samples / 212 patients**
+- **Patient-level labels (CV unit):** 68 allergic (32%) / 144 healthy (68%)
+- Sample-level labels: 258 positive / 527 negative
+- Country distribution (patients): FIN 71, EST 71, RUS 70 (but RUS is 62 healthy vs 8 allergic)
+
+### Track B: 16S OTU (Future)
+
+From `data/processed/16s/dataset_manifest.json`:
+- **1,450 samples / 203 subjects**
+- Sample labels: 491 positive / 959 negative
+- Subject labels: 72 positive / 131 negative
+
+---
+
+## Reproducibility: Seed Policy
+
+**Global seed**: `RANDOM_SEED = 42`
+
+All random operations must use this seed:
+- `StratifiedGroupKFold(shuffle=True, random_state=RANDOM_SEED)`
+- `train_test_split(..., random_state=RANDOM_SEED)`
+- Any model with randomness: `LogisticRegression(..., random_state=RANDOM_SEED)`
+- NumPy: `np.random.seed(RANDOM_SEED)` at notebook start
+
+This ensures:
+- Same fold assignments across runs
+- Same model initialization
+- Reproducible results
+
+---
+
+## Cross-Validation Structure
+
+### Baseline: Outer CV Only
+
+For the baseline notebook with fixed hyperparameters, **only outer CV is needed**:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ OUTER LOOP: 5-fold StratifiedGroupKFold                     │
+│   Purpose: Estimate generalization performance              │
+│   Groups: patient_id                                        │
+│                                                             │
+│   For each fold:                                            │
+│     1. Train LogReg with fixed hyperparams on train set     │
+│     2. Evaluate on test set (truly unseen)                  │
+│     3. Record metrics                                       │
+│                                                             │
+│   Result: Unbiased performance estimate (mean ± std)        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why this is sufficient:**
+- No hyperparameter tuning = no selection bias = no inner loop needed
+- Fixed hyperparameters (`C=1.0, class_weight='balanced'`) are reasonable defaults for LogReg
+- Outer CV alone gives unbiased generalization estimates
+
+### Baseline Implementation
 
 ```python
 from sklearn.model_selection import StratifiedGroupKFold
-import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import roc_auc_score
 
-def create_cv_splitter(
-    n_splits: int = 5,
-    random_state: int = 42,
-) -> StratifiedGroupKFold:
-    """Create cross-validator with subject-level grouping."""
-    return StratifiedGroupKFold(
-        n_splits=n_splits,
-        shuffle=True,
-        random_state=random_state,
-    )
+RANDOM_SEED = 42
+outer_cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=RANDOM_SEED)
 
+cv_results = []
+for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y, groups=patient_ids)):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
 
-def validate_cv_splits(
-    cv: StratifiedGroupKFold,
-    X: np.ndarray,
-    y: np.ndarray,
-    groups: np.ndarray,
-) -> None:
-    """Verify no subject appears in both train and test."""
-    for fold, (train_idx, test_idx) in enumerate(cv.split(X, y, groups=groups)):
-        train_subjects = set(groups[train_idx])
-        test_subjects = set(groups[test_idx])
+    # Fixed hyperparameters - no tuning, no inner loop
+    model = Pipeline([
+        ('scaler', StandardScaler()),
+        ('clf', LogisticRegression(
+            C=1.0,
+            class_weight='balanced',
+            solver='lbfgs',
+            max_iter=2000,
+            random_state=RANDOM_SEED
+        ))
+    ])
+    model.fit(X_train, y_train)
 
-        overlap = train_subjects & test_subjects
-        if overlap:
-            raise ValueError(f"Fold {fold}: Subject overlap detected: {overlap}")
+    # Evaluate on truly unseen test fold
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    cv_results.append({'fold': fold_idx, 'auroc': roc_auc_score(y_test, y_pred_proba)})
 
-        # Check class balance
-        train_ratio = y[train_idx].mean()
-        test_ratio = y[test_idx].mean()
-
-        print(f"Fold {fold}:")
-        print(f"  Train: {len(train_idx)} samples, {len(train_subjects)} subjects, "
-              f"{train_ratio:.1%} allergic")
-        print(f"  Test:  {len(test_idx)} samples, {len(test_subjects)} subjects, "
-              f"{test_ratio:.1%} allergic")
+# Report: mean ± std across folds
 ```
 
-### Small-Month Handling (Dynamic `n_splits`)
+---
 
-Some timepoints/months have too few subjects per class to support 5-fold CV. Use a dynamic splitter:
+### Optional: Nested CV (Only If Hyperparameter Tuning Is Needed)
+
+**This section is OPTIONAL. The baseline does NOT need this.**
+
+If you later want to tune hyperparameters AND get unbiased performance estimates, you must use nested CV. This is the only correct way to both tune and evaluate.
+
+**Why nested CV?**
+- GridSearchCV alone on full data → hyperparams selected by seeing ALL data → optimistically biased estimates
+- Nested CV → outer test folds are genuinely unseen during hyperparam selection → unbiased
 
 ```python
-def choose_n_splits(
-    y: np.ndarray,
-    groups: np.ndarray,
-    n_splits_max: int = 5,
-) -> int:
-    """Choose the largest feasible n_splits given subject counts per class."""
-    unique_groups, first_idx = np.unique(groups, return_index=True)
-    y_group = y[first_idx]  # safe because labels are constant within subject
+# ONLY if hyperparameter tuning is needed
+from sklearn.model_selection import GridSearchCV
 
-    n_pos = int((y_group == 1).sum())
-    n_neg = int((y_group == 0).sum())
+for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y, groups=patient_ids)):
+    X_train, X_test = X[train_idx], X[test_idx]
+    y_train, y_test = y[train_idx], y[test_idx]
+    groups_train = patient_ids[train_idx]
+
+    # Inner CV for hyperparam selection (only on training data)
+    inner_cv = StratifiedGroupKFold(n_splits=3, shuffle=True, random_state=RANDOM_SEED)
+    param_grid = {'clf__C': [0.01, 0.1, 1.0, 10.0]}
+
+    grid_search = GridSearchCV(model, param_grid, cv=inner_cv, scoring='roc_auc')
+    grid_search.fit(X_train, y_train, groups=groups_train)  # groups= is CRITICAL
+
+    # Evaluate on outer test fold (truly unseen)
+    y_pred_proba = grid_search.predict_proba(X_test)[:, 1]
+```
+
+**Critical**: Inner CV must use `groups=groups_train` to maintain subject-level splits.
+
+### Dynamic n_splits
+
+For small subsets (e.g., earliest horizons):
+
+```python
+def choose_n_splits(y_subj: np.ndarray, n_splits_max: int = 5) -> int:
+    n_pos = int((y_subj == 1).sum())
+    n_neg = int((y_subj == 0).sum())
     n_splits = min(n_splits_max, n_pos, n_neg)
     if n_splits < 2:
         raise ValueError(f"Insufficient subjects for CV: pos={n_pos} neg={n_neg}")
     return n_splits
 ```
 
-### Within-Subject Weighting (Subjects vs Samples)
+---
 
-If you train on **samples** (multiple rows per subject), subjects with many samples dominate both training and metrics.
+## Within-Subject Weighting (Samples vs Subjects)
 
-Preferred (simplest + robust): build a **subject-level** feature table (one row per subject) for each prediction horizon `m` by aggregating all samples with `collection_month <= m` (mean or last embedding). Then evaluate with stratified CV on subjects.
+If you train directly on all samples, subjects with many samples dominate.
 
-Secondary option (sample-level): train with per-subject `sample_weight` so each subject contributes total weight 1, and report metrics at the subject level by aggregating test predictions per subject (e.g., mean predicted probability).
+Preferred (simple + robust):
+- Build a **subject table** per horizon: one row per subject.
+
+Alternative:
+- Train on samples with `sample_weight = 1 / n_samples_for_subject`
+- Report metrics aggregated at the subject level.
 
 ---
 
-## Metrics Specification
+## Metrics
 
-### Primary Metric: AUROC
+Primary:
+- AUROC (subject-level)
 
-**Why AUROC?**
-- Threshold-independent (evaluates ranking ability)
-- Handles class imbalance well
-- Standard in clinical prediction papers
-- Interpretable: probability that a random allergic sample scores higher than a random healthy sample
-
-```python
-from sklearn.metrics import roc_auc_score
-
-def compute_auroc(y_true: np.ndarray, y_prob: np.ndarray) -> float:
-    """Compute Area Under ROC Curve."""
-    return roc_auc_score(y_true, y_prob)
-```
-
-### Secondary Metrics
-
-| Metric | Formula | Purpose |
-|--------|---------|---------|
-| **F1-Score** | 2 × (P × R) / (P + R) | Balance precision/recall |
-| **Precision** | TP / (TP + FP) | Of predicted allergic, how many are? |
-| **Recall** | TP / (TP + FN) | Of actual allergic, how many caught? |
-| **Specificity** | TN / (TN + FP) | Of actual healthy, how many correct? |
-
-```python
-from sklearn.metrics import (
-    f1_score,
-    precision_score,
-    recall_score,
-    confusion_matrix,
-)
-from dataclasses import dataclass
-
-
-@dataclass
-class Metrics:
-    """Collection of evaluation metrics."""
-    auroc: float
-    f1: float
-    precision: float
-    recall: float
-    specificity: float
-    confusion_matrix: np.ndarray
-
-
-def compute_all_metrics(
-    y_true: np.ndarray,
-    y_prob: np.ndarray,
-    threshold: float = 0.5,
-) -> Metrics:
-    """Compute all evaluation metrics."""
-    y_pred = (y_prob >= threshold).astype(int)
-
-    cm = confusion_matrix(y_true, y_pred)
-    tn, fp, fn, tp = cm.ravel()
-
-    return Metrics(
-        auroc=roc_auc_score(y_true, y_prob),
-        f1=f1_score(y_true, y_pred),
-        precision=precision_score(y_true, y_pred, zero_division=0),
-        recall=recall_score(y_true, y_pred, zero_division=0),
-        specificity=tn / (tn + fp) if (tn + fp) > 0 else 0,
-        confusion_matrix=cm,
-    )
-```
+Secondary:
+- Precision / Recall / F1 at a fixed threshold (0.5) or a calibrated threshold
+- Confusion matrix (normalized)
 
 ---
 
-## Handling Class Imbalance
+## Country Confounding
 
-### The Problem (CORRECTED)
+Food allergy prevalence differs strongly by country:
 
-| Class | Count | Percentage |
-|-------|-------|------------|
-| Healthy (0) | 454 | 58% |
-| Allergic (1) | 331 | 42% |
+| Country | Track A Samples | Allergy Rate |
+|---------|-----------------|--------------|
+| FIN | 281 | 49% |
+| EST | 199 | 38% |
+| RUS | 305 | 15% |
 
-**Note**: These are sample counts (785 total). At subject level: 122 healthy, 90 allergic.
+A model could learn "is this sample from Russia?" instead of "does this microbiome pattern predict allergy?".
 
-A naive model predicting all "healthy" achieves 58% accuracy but is useless.
+### Leave-One-Country-Out (LOCO)
 
-### Label Definition (IMPORTANT)
-
-HuggingFace `label=1` (allergic) includes **ANY** of:
-- Food allergies: milk, egg, peanut
-- Environmental allergies: dustmite, cat, dog, birch, timothy
-- High total IgE (`totalige_high`)
-
-**This is broader than just "food allergy"!**
-
-### Solution 1: Balanced Class Weights
+Required secondary analysis:
 
 ```python
-from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+countries = ['FIN', 'EST', 'RUS']
+loco_results = []
 
+for held_out in countries:
+    train_mask = df['country'] != held_out
+    test_mask = df['country'] == held_out
 
-def create_model(random_state: int = 42) -> Pipeline:
-    """Baseline model: StandardScaler + LogisticRegression."""
-    return Pipeline(
-        [
-            ("scaler", StandardScaler()),
-            (
-                "clf",
-                LogisticRegression(
-                    solver="liblinear",
-                    penalty="l2",
-                    C=1.0,
-                    class_weight="balanced",
-                    max_iter=2000,
-                    random_state=random_state,
-                ),
-            ),
-        ]
-    )
+    X_train, y_train = X[train_mask], y[train_mask]
+    X_test, y_test = X[test_mask], y[test_mask]
+
+    model.fit(X_train, y_train)
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+
+    loco_results.append({
+        'held_out': held_out,
+        'n_test': len(y_test),
+        'auroc': roc_auc_score(y_test, y_pred_proba)
+    })
 ```
 
-### Solution 2: Stratified Sampling
-
-Already handled by `StratifiedGroupKFold` — each fold maintains the original class distribution.
-
-### Solution 3: Threshold Tuning (Optional)
-
-```python
-def find_optimal_threshold(
-    y_true: np.ndarray,
-    y_prob: np.ndarray,
-    metric: str = "f1",
-) -> float:
-    """Find threshold that maximizes chosen metric."""
-    thresholds = np.linspace(0.1, 0.9, 81)
-    best_threshold = 0.5
-    best_score = 0.0
-
-    for t in thresholds:
-        y_pred = (y_prob >= t).astype(int)
-        if metric == "f1":
-            score = f1_score(y_true, y_pred)
-        elif metric == "youden":
-            # Youden's J = Sensitivity + Specificity - 1
-            cm = confusion_matrix(y_true, y_pred)
-            tn, fp, fn, tp = cm.ravel()
-            sens = tp / (tp + fn) if (tp + fn) > 0 else 0
-            spec = tn / (tn + fp) if (tn + fp) > 0 else 0
-            score = sens + spec - 1
-
-        if score > best_score:
-            best_score = score
-            best_threshold = t
-
-    return best_threshold
-```
+**Interpretation:**
+- If LOCO AUROC >> 0.5: Model learns transferable microbiome signal
+- If LOCO AUROC ≈ 0.5: Model may be learning country-specific batch effects
 
 ---
 
-## Per-Age-Bin Analysis
+## Class Imbalance Handling
 
-**⚠️ IMPORTANT**: HuggingFace `Month_N` folders do NOT represent collection month!
-Use `data/processed/unified_samples.csv` with TRUE `collection_month` from RData.
+With ~33% positive class, use:
 
-### Goal
+1. **`class_weight='balanced'`** in classifiers
+2. **AUPRC** (Area Under Precision-Recall Curve) as secondary metric alongside AUROC
+3. **Stratified folds** to maintain class ratio in each fold
 
-Determine at which developmental stage the microbiome signal becomes predictive.
-
-**Important**: avoid *time leakage*. If you claim “predict by month m”, inputs must not include samples collected after month m.
-
-### Age Bins
-
-| Age Bin | Collection Months | Samples | Description |
-|---------|-------------------|---------|-------------|
-| 0-3 | 1-3 | 45 | Very early (high clinical value) |
-| 4-6 | 4-6 | 65 | Introduction of solids |
-| 7-12 | 7-12 | 197 | First year |
-| 13-24 | 13-24 | 381 | Most samples |
-| 25+ | 25-38 | 97 | Toddler |
-
-### Approach
-
-Recommended (leakage-resistant): build **one row per subject** at horizon `m` by aggregating samples with `collection_month <= m` (e.g., mean embedding or last observed embedding), then run subject-level CV.
-
-```python
-def evaluate_by_age_bin(
-    X: np.ndarray,
-    y: np.ndarray,
-    groups: np.ndarray,
-    samples_df: pd.DataFrame,
-    n_splits: int = 5,
-    random_state: int = 42,
-) -> pd.DataFrame:
-    """Evaluate model on each age bin independently."""
-
-    def get_age_bin(month):
-        if month <= 3: return "0-3"
-        elif month <= 6: return "4-6"
-        elif month <= 12: return "7-12"
-        elif month <= 24: return "13-24"
-        else: return "25+"
-
-    samples_df = samples_df.copy()
-    samples_df['age_bin'] = samples_df['collection_month'].apply(get_age_bin)
-
-    results = []
-
-    for age_bin in ["0-3", "4-6", "7-12", "13-24", "25+"]:
-        mask = samples_df['age_bin'] == age_bin
-        if mask.sum() < 10:  # Skip if too few samples
-            continue
-
-        X_bin = X[mask]
-        y_bin = y[mask]
-        groups_bin = groups[mask]
-
-        cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-        fold_metrics = []
-
-        for train_idx, test_idx in cv.split(X_bin, y_bin, groups=groups_bin):
-            X_train, X_test = X_bin[train_idx], X_bin[test_idx]
-            y_train, y_test = y_bin[train_idx], y_bin[test_idx]
-
-            model = create_model()
-            model.fit(X_train, y_train)
-            y_prob = model.predict_proba(X_test)[:, 1]
-
-            fold_metrics.append(compute_all_metrics(y_test, y_prob))
-
-        results.append({
-            "age_bin": age_bin,
-            "n_samples": mask.sum(),
-            "n_subjects": len(set(groups_bin)),
-            "n_allergic": int(y_bin.sum()),
-            "auroc_mean": np.mean([m.auroc for m in fold_metrics]),
-            "auroc_std": np.std([m.auroc for m in fold_metrics]),
-            "f1_mean": np.mean([m.f1 for m in fold_metrics]),
-            "f1_std": np.std([m.f1 for m in fold_metrics]),
-        })
-
-    return pd.DataFrame(results)
-```
-
-### Expected Output
-
-```
-Age Bin | Samples | Subjects | Allergic | AUROC (mean±std) | F1 (mean±std)
---------|---------|----------|----------|------------------|---------------
-0-3     | 45      | ~40      | ~19      | 0.52 ± 0.08      | 0.35 ± 0.10
-4-6     | 65      | ~55      | ~27      | 0.58 ± 0.07      | 0.42 ± 0.09
-7-12    | 197     | ~100     | ~80      | 0.63 ± 0.06      | 0.48 ± 0.08
-13-24   | 381     | ~180     | ~160     | 0.65 ± 0.05      | 0.50 ± 0.07
-25+     | 97      | ~80      | ~40      | 0.60 ± 0.07      | 0.45 ± 0.09
-```
+Do NOT use:
+- Accuracy (misleading with imbalance)
+- Oversampling/SMOTE (adds complexity without clear benefit for this ratio)
 
 ---
 
-## Statistical Significance
+## Reporting Template
 
-### Bootstrap Confidence Intervals
+### Output Tables
 
-```python
-from scipy import stats
+- `notebooks/results/cv_metrics.csv` — per-fold AUROC, AUPRC, F1 (with `horizon` column)
+- `notebooks/results/cv_summary.csv` — mean ± std across folds (grouped by horizon)
+- `notebooks/results/loco_metrics.csv` — AUROC per held-out country (with horizon column)
 
+### Output Plots
 
-def bootstrap_ci(
-    y_true: np.ndarray,
-    y_prob: np.ndarray,
-    metric_fn: callable,
-    n_bootstrap: int = 1000,
-    ci: float = 0.95,
-    random_state: int = 42,
-) -> tuple[float, float, float]:
-    """Compute bootstrap confidence interval for a metric.
+- ROC curves (per-fold + mean)
+- Precision-Recall curves (per-fold + mean)
+- LOCO AUROC bar chart by country
+- (Optional) AUROC vs horizon cutoff `m` (cumulative horizons)
 
-    Returns:
-        (point_estimate, ci_lower, ci_upper)
-    """
-    rng = np.random.RandomState(random_state)
-    n_samples = len(y_true)
-    scores = []
+### Reproducibility Footer
 
-    for _ in range(n_bootstrap):
-        idx = rng.choice(n_samples, size=n_samples, replace=True)
-        score = metric_fn(y_true[idx], y_prob[idx])
-        scores.append(score)
-
-    point = metric_fn(y_true, y_prob)
-    lower = np.percentile(scores, (1 - ci) / 2 * 100)
-    upper = np.percentile(scores, (1 + ci) / 2 * 100)
-
-    return point, lower, upper
-```
-
-### Comparing Months
+Every notebook must end with:
 
 ```python
-def is_significantly_better(
-    auroc_1: float,
-    auroc_2: float,
-    n_1: int,
-    n_2: int,
-    alpha: float = 0.05,
-) -> bool:
-    """Test if AUROC difference is significant using DeLong test approximation."""
-    # Simplified: use standard error approximation
-    se_1 = np.sqrt(auroc_1 * (1 - auroc_1) / n_1)
-    se_2 = np.sqrt(auroc_2 * (1 - auroc_2) / n_2)
-
-    z = (auroc_1 - auroc_2) / np.sqrt(se_1**2 + se_2**2)
-    p_value = 2 * (1 - stats.norm.cdf(abs(z)))
-
-    return p_value < alpha
+print(f"Random seed: {RANDOM_SEED}")
+print(f"Python: {sys.version}")
+print(f"NumPy: {np.__version__}")
+print(f"pandas: {pd.__version__}")
+print(f"scikit-learn: {sklearn.__version__}")
+print(f"Run completed: {datetime.now().isoformat()}")
 ```
-
----
-
-## Country Confounding Check (Leave-One-Country-Out)
-
-Country is a major potential confounder (FIN/EST/RUS differ in environment, diet, and baseline allergy prevalence). Add a strict evaluation where you train on two countries and test on the third.
-
-```python
-def leave_one_country_out(
-    X_subj: np.ndarray,
-    y_subj: np.ndarray,
-    subj_df: pd.DataFrame,  # must include columns: subject_id, country
-) -> pd.DataFrame:
-    rows: list[dict[str, object]] = []
-
-    for held_out in sorted(subj_df["country"].unique()):
-        train_mask = subj_df["country"] != held_out
-        test_mask = subj_df["country"] == held_out
-
-        if len(set(y_subj[train_mask.to_numpy()])) < 2:
-            continue
-        if len(set(y_subj[test_mask.to_numpy()])) < 2:
-            continue
-
-        model = create_model()
-        model.fit(X_subj[train_mask.to_numpy()], y_subj[train_mask.to_numpy()])
-        prob = model.predict_proba(X_subj[test_mask.to_numpy()])[:, 1]
-
-        rows.append(
-            {
-                "held_out_country": held_out,
-                "n_test_subjects": int(test_mask.sum()),
-                "auroc": float(roc_auc_score(y_subj[test_mask.to_numpy()], prob)),
-            }
-        )
-
-    return pd.DataFrame(rows)
-```
-
----
-
-## Visualization Functions
-
-### ROC Curve
-
-```python
-import matplotlib.pyplot as plt
-from sklearn.metrics import RocCurveDisplay
-
-
-def plot_roc_curve(
-    y_true: np.ndarray,
-    y_prob: np.ndarray,
-    month: int,
-    ax: plt.Axes | None = None,
-) -> plt.Axes:
-    """Plot ROC curve for a month."""
-    if ax is None:
-        _, ax = plt.subplots()
-
-    RocCurveDisplay.from_predictions(
-        y_true,
-        y_prob,
-        ax=ax,
-        name=f"Month {month}",
-    )
-
-    auroc = roc_auc_score(y_true, y_prob)
-    ax.set_title(f"Month {month} (AUROC={auroc:.3f})")
-    ax.grid(True, alpha=0.3)
-
-    return ax
-```
-
-### Confusion Matrix
-
-```python
-from sklearn.metrics import ConfusionMatrixDisplay
-
-
-def plot_confusion_matrix(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    month: int,
-    ax: plt.Axes | None = None,
-    normalize: str = "true",
-) -> plt.Axes:
-    """Plot confusion matrix."""
-    if ax is None:
-        _, ax = plt.subplots()
-
-    ConfusionMatrixDisplay.from_predictions(
-        y_true,
-        y_pred,
-        ax=ax,
-        cmap="Blues",
-        normalize=normalize,
-        display_labels=["Healthy", "Allergic"],
-    )
-    ax.set_title(f"Month {month}")
-
-    return ax
-```
-
-### AUROC Timeline
-
-```python
-def plot_auroc_timeline(
-    results_df: pd.DataFrame,
-    output_path: Path | None = None,
-) -> plt.Figure:
-    """Plot AUROC across months with error bars."""
-    fig, ax = plt.subplots(figsize=(10, 5))
-
-    ax.errorbar(
-        results_df["month"],
-        results_df["auroc_mean"],
-        yerr=results_df["auroc_std"],
-        marker="o",
-        capsize=5,
-        linewidth=2,
-        markersize=8,
-    )
-
-    ax.axhline(0.5, color="red", linestyle="--", alpha=0.7, label="Random (0.5)")
-    ax.axhline(0.7, color="green", linestyle=":", alpha=0.7, label="Good (0.7)")
-
-    ax.set_xlabel("Month", fontsize=12)
-    ax.set_ylabel("AUROC", fontsize=12)
-    ax.set_title("DIABIMMUNE Prediction: Performance Over Time", fontsize=14)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.set_ylim(0.4, 1.0)
-
-    if output_path:
-        fig.savefig(output_path, dpi=150, bbox_inches="tight")
-
-    return fig
-```
-
----
-
-## Verification Checklist
-
-- [ ] No subject overlap between train/test (verified with `validate_cv_splits`)
-- [ ] Class balance maintained in each fold (~42/58 at sample level; 90/122 at subject level)
-- [ ] AUROC computed correctly (sanity check: random should be ~0.5)
-- [ ] Class weights balanced in model
-- [ ] Metrics aggregated with mean ± std across folds
-- [ ] Confidence intervals computed where needed
-- [ ] All visualizations use consistent styling

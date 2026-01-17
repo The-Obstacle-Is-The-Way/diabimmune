@@ -1,0 +1,87 @@
+{
+  "created_at": "2026-01-16T03:36:23.948503+00:00",
+  "sources": {
+    "rdata": {
+      "path": "data/raw/DIABIMMUNE_Karelia_metadata.RData",
+      "sha256": "a64f1abd4ac75ada3b6cc52ce13e4b3dbf55f92463ec25ce2e0b7cba8cb0300d"
+    },
+    "otu_table": {
+      "path": "data/raw/diabimmune_karelia_16s_otu_table.txt",
+      "sha256": "3227ba83d7bac56db561c3aeed83a4660254a510c6e14dd2484a232c8f2230c8",
+      "format": "TSV with taxonomy row labels; Greengenes ID is final |<int> segment"
+    }
+  },
+  "label_definition": {
+    "name": "food_allergy_only",
+    "positive_if_any_true": [
+      "allergy_milk",
+      "allergy_egg",
+      "allergy_peanut"
+    ],
+    "unit": "subject-level (propagated to all samples)",
+    "missing_handling": "subjects with no observed food allergy outcomes are excluded"
+  },
+  "dataset": {
+    "n_samples_16s_total": 1584,
+    "n_subjects_16s_total": 221,
+    "n_samples_labeled": 1450,
+    "n_subjects_labeled": 203,
+    "sample_label_counts": {
+      "0": 959,
+      "1": 491
+    },
+    "subject_label_counts": {
+      "0": 131,
+      "1": 72
+    },
+    "subjects_by_country": {
+      "FIN": 73,
+      "EST": 73,
+      "RUS": 57
+    },
+    "subjects_by_country_and_label": {
+      "0": {
+        "EST": 45,
+        "FIN": 37,
+        "RUS": 49
+      },
+      "1": {
+        "EST": 28,
+        "FIN": 36,
+        "RUS": 8
+      }
+    },
+    "samples_by_country": {
+      "RUS": 539,
+      "EST": 463,
+      "FIN": 448
+    },
+    "samples_by_country_and_label": {
+      "0": {
+        "EST": 280,
+        "FIN": 231,
+        "RUS": 448
+      },
+      "1": {
+        "EST": 183,
+        "FIN": 217,
+        "RUS": 91
+      }
+    },
+    "n_otus": 2005
+  },
+  "artifacts": {
+    "samples_csv": {
+      "path": "data/processed/16s/samples_food_allergy.csv",
+      "sha256": "d23a60d3fae14bd28b911835a9e705137febca7f172143defc37d67b6f615b6f"
+    },
+    "otus_csv": {
+      "path": "data/processed/16s/otus_greengenes_ids.csv",
+      "sha256": "d2e321f943bb6f1f04c4a0c5affb76b174487a673c5ebddffaa83e94107ff6e0"
+    },
+    "otu_counts_npz": {
+      "path": "data/processed/16s/otu_counts.npz",
+      "sha256": "afa0d19075dbea5f7d85d579bdba0d4bc5990790f33a1c520bf63d71c787de52"
+    }
+  }
+}

@@ -1,170 +1,55 @@
 # Specs Index
 
-## Overview
+These specs define a minimal, reproducible workflow for the **DIABIMMUNE food allergy classifier**.
 
-Vertical slice specifications for the DIABIMMUNE Allergy Classifier notebook.
+---
 
-Each spec is self-contained and can be implemented independently, though they build on each other in order.
+## Two Modeling Tracks
+
+**Track A: HF Embeddings Baseline (Current Focus)**
+- Pre-computed 100-dim embeddings (785 samples / 212 patients)
+- Ludo's corrected metadata with food-allergy-only labels
+- Ready for modeling now
+
+**Track B: 16S OTU Full Dataset (Future)**
+- Raw 16S OTU table (1,450 labeled samples / 203 subjects)
+- Requires embedding generation (ProkBERT pipeline)
 
 ---
 
 ## Implementation Order
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  01_PROJECT_SETUP.md                                            │
-│  ├── pyproject.toml (uv, dependencies)                          │
-│  ├── .gitignore                                                  │
-│  ├── .pre-commit-config.yaml                                     │
-│  └── Directory structure                                         │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  02_DATA_PIPELINE.md                                            │
-│  ├── HuggingFace download                                       │
-│  ├── RData extraction (subject_id mapping)                      │
-│  ├── H5 embedding loading                                       │
-│  └── Canonical embedding export                                 │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  03_NOTEBOOK_STRUCTURE.md                                       │
-│  ├── Cell-by-cell specification                                 │
-│  ├── Section breakdown                                          │
-│  ├── Import organization                                        │
-│  └── Configuration constants                                    │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  04_EVALUATION.md                                               │
-│  ├── StratifiedGroupKFold implementation                        │
-│  ├── Metrics (AUROC, F1, confusion matrix)                      │
-│  ├── Per-month analysis                                         │
-│  └── Visualization functions                                    │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  05_QUALITY.md                                                  │
-│  ├── ruff configuration                                         │
-│  ├── mypy configuration                                         │
-│  ├── nbqa for notebooks                                         │
-│  └── pre-commit hooks                                           │
-└─────────────────────────────────────────────────────────────────┘
-```
+0. `00_HYPOTHESIS.md` — hypotheses + horizons (prediction vs association)
+1. `01_PROJECT_SETUP.md` — uv + strict tooling
+2. `02_DATA_PIPELINE.md` — prepare 16S + (optional) HF legacy artifacts
+3. `03_NOTEBOOK_STRUCTURE.md` — notebook layout (baseline LogReg + horizons)
+4. `04_EVALUATION.md` — leakage-safe evaluation (StratifiedGroupKFold, horizons, LOCO)
+5. `05_QUALITY.md` — lint/format/typecheck + notebook hygiene
+6. `06_DATA_SCHEMA.md` — file formats + invariants
+7. `07_OUTCOME_DEFINITION.md` — label + missingness policy
+8. `08_FEATURE_ENGINEERING.md` — OTU transforms (no leakage)
+9. `09_TESTING.md` — tests that enforce invariants
+10. `10_EMBEDDINGS_PIPELINE.md` — ProkBERT + sample embeddings (planned)
+11. `11_PROVENANCE.md` — source registry + provenance manifests
 
 ---
 
-## Spec Files
+## Expected Artifacts
 
-| # | File | Description | Time Est |
-|---|------|-------------|----------|
-| 01 | [PROJECT_SETUP.md](01_PROJECT_SETUP.md) | uv, pyproject.toml, directory structure | 15 min |
-| 02 | [DATA_PIPELINE.md](02_DATA_PIPELINE.md) | Download, load, merge data sources | 30 min |
-| 03 | [NOTEBOOK_STRUCTURE.md](03_NOTEBOOK_STRUCTURE.md) | Cell-by-cell notebook specification | 45 min |
-| 04 | [EVALUATION.md](04_EVALUATION.md) | CV strategy, metrics, visualizations | 30 min |
-| 05 | [QUALITY.md](05_QUALITY.md) | Linting, formatting, pre-commit | 15 min |
+### Track A (HF Embeddings Baseline)
 
-**Total estimated implementation time: ~2-3 hours**
+**Metadata** (`data/processed/longitudinal_wgs_subset/`):
+- `Month_1.csv` through `Month_38.csv` (35 files)
+- Columns: `sid, patient_id, country, label, allergen_class`
 
----
+**Embeddings** (`data/processed/hf_legacy/`):
+- `microbiome_embeddings_100d.h5` — 785 samples, 100-dim vectors
+- `unified_samples.csv` — legacy metadata (for reference)
 
-## Dependencies Between Specs
+### Track B (16S OTU Full Dataset)
 
-```
-01_PROJECT_SETUP ──→ Required by all others
-        ↓
-02_DATA_PIPELINE ──→ Required by 03, 04
-        ↓
-03_NOTEBOOK_STRUCTURE ──→ Uses 02, 04
-        ↓
-04_EVALUATION ──→ Used by 03
-        ↓
-05_QUALITY ──→ Applies to final notebook
-```
-
----
-
-## Quick Start
-
-After reading all specs, implementation order:
-
-1. **Setup project** (01)
-   ```bash
-   uv sync
-   source .venv/bin/activate
-   pre-commit install
-   ```
-
-2. **Explore data** (02)
-   - Run `python scripts/prepare_data.py`
-   - Verify `data/processed/unified_samples.csv` and `data/processed/microbiome_embeddings_100d.h5`
-
-3. **Build notebook** (03)
-   - Create sections 0-2 first (setup, data loading)
-   - Verify data pipeline works
-   - Add sections 3-6 (training, viz, export)
-
-4. **Verify evaluation** (04)
-   - Confirm no subject overlap
-   - Check class balance
-   - Validate metrics
-
-5. **Final polish** (05)
-   - Run `pre-commit run --all-files`
-   - Strip notebook outputs
-   - Commit clean notebook
-
----
-
-## Output Artifacts
-
-After implementation, you'll have:
-
-```
-diabimmune/
-├── pyproject.toml                  # From 01
-├── uv.lock                         # From 01 (pinned deps)
-├── .pre-commit-config.yaml         # From 01, 05
-├── .gitignore                      # From 01
-├── scripts/
-│   └── prepare_data.py             # From 02
-├── notebooks/
-│   └── 01_baseline_classifier.ipynb  # From 03
-├── data/                           # From 02
-│   ├── raw/
-│   │   ├── DIABIMMUNE_Karelia_metadata.RData
-│   │   └── sra_runinfo.csv
-│   └── processed/
-│       ├── unified_samples.csv
-│       ├── srs_to_subject_mapping.csv
-│       └── microbiome_embeddings_100d.h5
-├── results/                    # From 03 (gitignored)
-│   ├── summary.csv
-│   ├── detailed_results.csv
-│   ├── auroc_over_time.png
-│   ├── roc_curves.png
-│   └── confusion_matrices.png
-└── docs/
-    ├── MASTER.MD
-    └── specs/
-        ├── 00_INDEX.md         # This file
-        ├── 01_PROJECT_SETUP.md
-        ├── 02_DATA_PIPELINE.md
-        ├── 03_NOTEBOOK_STRUCTURE.md
-        ├── 04_EVALUATION.md
-        └── 05_QUALITY.md
-```
-
----
-
-## Success Criteria
-
-The notebook is complete when:
-
-- [ ] Runs top-to-bottom without errors
-- [ ] Uses subject-level CV (no data leakage)
-- [ ] Reports AUROC per month with std
-- [ ] Generates all visualizations
-- [ ] Passes all pre-commit hooks
-- [ ] Outputs are stripped before commit
-- [ ] Results are reproducible (seeds set)
+Generated by `scripts/prepare_16s_dataset.py`:
+- `data/processed/16s/samples_food_allergy.csv`
+- `data/processed/16s/otus_greengenes_ids.csv`
+- `data/processed/16s/otu_counts.npz`
+- `data/processed/16s/dataset_manifest.json`

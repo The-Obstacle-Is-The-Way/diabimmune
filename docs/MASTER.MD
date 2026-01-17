@@ -1,375 +1,244 @@
-# DIABIMMUNE Allergy Classifier
+# DIABIMMUNE Food Allergy Classifier
 
 ## Executive Summary
 
-A binary classifier that predicts allergy development in infants using gut microbiome embeddings from the DIABIMMUNE three-country cohort.
-
-| Component | Description |
-|-----------|-------------|
-| **Input** | Pre-computed 100-dimensional microbiome embeddings (one per WGS sample) |
-| **Output** | Binary prediction (0 = healthy, 1 = any allergy or high total IgE) |
-| **Evaluation** | Per-age-bin AUROC, F1, confusion matrices with proper subject-level splits |
+We build a binary classifier that predicts **food allergy development** in infants from the DIABIMMUNE Three‑Country Cohort (FIN/EST/RUS) using gut microbiome data.
 
 ---
 
-## Critical Corrections (2026-01-15)
+## Two Modeling Tracks
 
-After first-principles data validation, several critical issues were found:
+### Track A: HF Embeddings Baseline (Active — Use This First)
 
-| Issue | Original Assumption | Reality |
-|-------|---------------------|---------|
-| **Label definition** | Food allergy only (milk/egg/peanut) | ANY allergy + totalige_high |
-| **HuggingFace Month_N** | Collection month | **Duplicated data** - same samples in multiple folders |
-| **Sample count** | ~658 (16S-based) | 785 (WGS-based) |
-| **Subject count** | ~148 | 212 |
-| **Class balance** | 35% allergic / 65% healthy | **42% allergic / 58% healthy** |
-| **ID mapping column** | `host_subject_id` | `gid_wgs` → `subjectID` |
+Pre-computed 100-dim embeddings from MicrobeAtlas/HuggingFace with Ludo's corrected metadata.
 
-**See `data/README.md` for complete provenance and validation.**
+**Dataset:**
+- **785 samples / 212 patients** (WGS-keyed subset)
+- Labels: **food allergy only** (`allergen_class`: 0=none, 1=milk, 2=egg, 3=peanut, 4=multiple)
+- Each sample appears in exactly one month (fixed by Ludo 2026-01-16)
+- Class balance: ~33% allergic overall
 
----
+**Files:**
+- `data/processed/longitudinal_wgs_subset/Month_*.csv` — metadata (sid, patient_id, country, label, allergen_class)
+- `data/processed/hf_legacy/microbiome_embeddings_100d.h5` — embeddings (keyed by SRS ID)
 
-## Why This Matters
+**Country distribution:**
+| Country | Samples | Allergy Rate |
+|---------|---------|--------------|
+| FIN | 281 | 49% |
+| EST | 199 | 38% |
+| RUS | 305 | 15% |
 
-Gut microbiome composition in early life predicts allergy development **months before clinical symptoms**. The signal exists—we just need to detect it properly without methodological leakage.
+### Track B: 16S OTU Full Dataset (Future — Requires Embedding Generation)
 
-Key scientific findings:
-- Allergic children exhibit **reduced microbial diversity**
-- **Depletion of protective taxa**: *Bifidobacterium*, *Faecalibacterium*, butyrate-producing *Clostridia*
-- **Enrichment of pro-inflammatory bacteria**: *Escherichia-Shigella*, *Ruminococcus gnavus*
-- These shifts are detectable months before clinical manifestation
+Full DIABIMMUNE 16S data with food-allergy-only labels.
 
----
+**Dataset:**
+- **1,450 samples / 203 subjects** (after excluding missing outcomes)
+- Raw OTU table: 1,584 samples × 2,005 Greengenes OTUs
+- Labels: `label_food = allergy_milk | allergy_egg | allergy_peanut`
 
-## The DIABIMMUNE Cohort
+**Files:**
+- `data/processed/16s/samples_food_allergy.csv`
+- `data/processed/16s/otu_counts.npz`
 
-### Study Design
-
-The **Three-Country Cohort** studies the **hygiene hypothesis**—why autoimmune diseases and allergies are more common in developed countries.
-
-| Country | T1D Incidence | Subjects | Notes |
-|---------|---------------|----------|-------|
-| **Finland** | Highest globally | 74 infants | Western, developed |
-| **Estonia** | Rapidly increasing | 74 infants | Modernizing |
-| **Russia (Karelia)** | Relatively rare | 74 infants | Less developed |
-
-### Cohort Details
-
-- **222 total infants** enrolled (74 per country)
-- **Selection criteria**: Similar HLA risk (T1D predisposition), matched gender
-- **Follow-up**: Birth to age 3 (monthly stool samples)
-- **Data collected**: Stool samples, lab assays, questionnaires (breastfeeding, diet, allergies, infections, family history, medications)
-
-### Sequencing Data
-
-| Type | Samples | Description |
-|------|---------|-------------|
-| **16S rRNA amplicon** | 1,584 | V4 region, paired-end |
-| **Whole-genome shotgun (WGS, embeddings-backed subset)** | 785 | BioProject PRJNA290380 / HuggingFace embeddings |
-
-**Note**: The RData contains additional `gid_wgs` entries beyond the 785 that have embeddings; this project uses the 785-sample intersection defined by PRJNA290380 runinfo + HuggingFace embeddings.
-
-### Label Definition (CORRECTED)
-
-HuggingFace `label=1` (allergic) means **ANY of the following is True**:
-
-| Allergy Type | Column in RData |
-|--------------|-----------------|
-| Food: Milk | `allergy_milk` |
-| Food: Egg | `allergy_egg` |
-| Food: Peanut | `allergy_peanut` |
-| Environmental: Dust mite | `allergy_dustmite` |
-| Environmental: Cat | `allergy_cat` |
-| Environmental: Dog | `allergy_dog` |
-| Environmental: Birch | `allergy_birch` |
-| Environmental: Timothy grass | `allergy_timothy` |
-| **High total IgE** | `totalige_high` |
-
-**This is broader than "food allergy" - it includes environmental allergies and elevated IgE!**
-
-### Dataset Numbers (CORRECTED)
-
-| Category | Count |
-|----------|-------|
-| Unique WGS samples in HuggingFace | **785** |
-| Unique subjects with WGS | **212** |
-| Allergic subjects (label=1) | **90** (42%) |
-| Healthy subjects (label=0) | **122** (58%) |
+**Status:** Requires embedding generation (ProkBERT → sample aggregation). See `docs/specs/10_EMBEDDINGS_PIPELINE.md`.
 
 ---
 
-## The Data Pipeline (Already Done)
+## Current Focus: Track A Baseline Notebook
 
-```
-Stool Sample (SRS ID)
-    ↓
-OTU IDs (which bacteria present)
-    ↓
-16S rRNA DNA sequences
-    ↓
-ProkBERT embeddings (384-dim per OTU)
-    ↓
-MicrobiomeTransformer aggregation (100-dim per sample)
-    ↓
-Ready for classifier
-```
+The immediate deliverable is a baseline notebook using Track A data with:
+1. Proper subject-level splits (StratifiedGroupKFold, groups=patient_id)
+2. Fixed hyperparameters (no inner CV for baseline)
+3. Infrastructure supporting future hyperparameter tuning
+4. Leave-One-Country-Out (LOCO) as secondary analysis
+5. Cumulative horizon analyses (≤3, ≤6, ≤12 months) + “all” association baseline (see `docs/specs/00_HYPOTHESIS.md`)
 
-### Embedding Model
-
-The embeddings come from [Matteo's Microbiome World Model](https://the-puzzler.github.io/post.html?p=posts/micro-modelling/micro-modelling.html):
-
-1. **ProkBERT**: DNA language model embeds 16S rRNA sequences (384-dim per OTU)
-2. **MicrobiomeTransformer**: Aggregates OTU embeddings into sample-level representation (100-dim)
-
-### Pre-computed Embeddings
-
-Available on HuggingFace: **[hugging-science/AI4FA-Diabimmune](https://huggingface.co/datasets/hugging-science/AI4FA-Diabimmune)**
-
-Pinned revision (recommended for reproducibility): `7761eea93dad5712a03452786b43031dc9b04233`
-
-**⚠️ CRITICAL WARNING: HuggingFace Month_N Structure**
-
-```
-The HuggingFace Month_N folders are NOT a partition of samples by collection month.
-
-What they actually imply:
-- The same SRS sample appears in many Month_* folders (overlapping subject subsets).
-- The embedding vector for the same SRS is NOT guaranteed identical across folders (small numeric differences exist).
-
-To make modeling unambiguous, this project exports a single canonical embedding file:
-- For each sample, we select the embedding from Month_{TRUE collection_month} (collection_month comes from the RData ground truth).
-
-Use:
-  data/processed/unified_samples.csv            (ground-truth metadata per WGS sample)
-  data/processed/microbiome_embeddings_100d.h5  (one embedding vector per SRS sample)
-```
+Data provenance and exact counts live in `docs/data/SOURCE_REGISTRY.md`.
 
 ---
 
-## ID Mapping Chain
+## Source of Truth
 
-HuggingFace sample IDs need to be mapped to subject IDs through a chain:
+**Raw data (ground truth):**
+- `data/raw/DIABIMMUNE_Karelia_metadata.RData` — metadata + outcomes from Broad Institute
+- `data/raw/diabimmune_karelia_16s_otu_table.txt` — OTU counts (Greengenes IDs in row labels)
 
-```
-SRS1719091 (HuggingFace sid)
-    │
-    └── via SRA runinfo (Sample → LibraryName)
-        │
-        └── G78508 (gid_wgs in RData)
-            │
-            └── T012374 (subjectID in RData)
-```
+**Track A processed data (for baseline notebook):**
+- `data/processed/longitudinal_wgs_subset/Month_*.csv` — Ludo's corrected metadata
+- `data/processed/hf_legacy/microbiome_embeddings_100d.h5` — pre-computed embeddings
 
-**The mapping file is: `data/processed/srs_to_subject_mapping.csv`**
+**Track B processed data (for future full pipeline):**
+- `data/processed/16s/*` — 16S OTU artifacts
 
 ---
 
-## Proper Evaluation
+## Datasets Detail
 
-### Cross-Validation Setup
+### Track A: HF Embeddings + Ludo's Corrected Metadata
 
-```python
-from sklearn.model_selection import StratifiedGroupKFold
+**Metadata files** (`data/processed/longitudinal_wgs_subset/`):
+- 35 files: `Month_1.csv` through `Month_38.csv` (not all months exist)
+- Columns: `sid, patient_id, country, label, allergen_class`
+- Each sample appears in exactly ONE month (no leakage)
+- Labels are **eventual outcome** (not status at collection)
 
-# Groups = subject_id (infant)
-# Stratify = label (allergy status)
-# Ensures:
-#   - All samples from one infant stay together
-#   - Class balance maintained in each fold
+**Embeddings file** (`data/processed/hf_legacy/`):
+- `microbiome_embeddings_100d.h5` — 785 samples, 100-dim float32 vectors
+- Keys are SRS IDs (e.g., `SRS1719259`)
+- Provenance: MicrobeAtlas → ProkBERT → MicrobiomeTransformer (exact method undocumented)
 
-cv = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+**Join key:** `sid` in CSVs = keys in H5 file (100% alignment verified)
 
-for fold, (train_idx, test_idx) in enumerate(cv.split(X, y, groups=subject_ids)):
-    X_train, X_test = X[train_idx], X[test_idx]
-    y_train, y_test = y[train_idx], y[test_idx]
-    # Train and evaluate
+**Label encoding:**
+| allergen_class | Meaning |
+|----------------|---------|
+| 0 | No food allergy |
+| 1 | Milk allergy only |
+| 2 | Egg allergy only |
+| 3 | Peanut allergy only |
+| 4 | Multiple food allergies |
+
+**Binary label:** `label = 1` if `allergen_class > 0`, else `0`
+
+### Track B: 16S OTU Full Dataset
+
+Prepared artifacts (rebuildable):
+- `data/processed/16s/samples_food_allergy.csv`
+- `data/processed/16s/otus_greengenes_ids.csv`
+- `data/processed/16s/otu_counts.npz`
+- `data/processed/16s/dataset_manifest.json`
+
+Rebuild:
+```bash
+uv run python3 scripts/prepare_16s_dataset.py --force
 ```
 
-### Why Subject-Level Splits Are Critical
+**Important**: 18 subjects have all food-allergy fields missing; their 16S samples are excluded (1,450 labeled samples remain).
 
-```
-❌ Random split (WRONG):
-   Train: [SRS001_month1, SRS001_month3, SRS002_month1]  ← Same infant in both!
-   Test:  [SRS001_month2, SRS002_month2]
-
-✅ Subject-level split (CORRECT):
-   Train: [All samples from infant_001, infant_002]
-   Test:  [All samples from infant_003, infant_004]
-```
-
-### Metrics
-
-| Metric | Purpose |
-|--------|---------|
-| **AUROC** | Primary metric, handles class imbalance |
-| **F1-score** | Balance of precision/recall |
-| **Precision** | Of predicted allergic, how many actually are? |
-| **Recall** | Of actual allergic, how many did we catch? |
-| **Confusion matrix** | Normalized, visual validation |
-
-### Analysis Goal
-
-**At which age does the signal become predictive?**
-
-Collection months are binned for analysis:
-
-| Age Bin | Samples | Notes |
-|---------|---------|-------|
-| 0-3 months | 45 | Very early (high clinical value) |
-| 4-6 months | 65 | Introduction of solids |
-| 7-12 months | 197 | First year |
-| 13-24 months | 381 | Most samples here |
-| 25+ months | 97 | Toddler |
+**Status**: Requires embedding generation before modeling. See `docs/specs/10_EMBEDDINGS_PIPELINE.md`.
 
 ---
 
-## The Classifier
+## Modeling Pipeline
 
-### Start Simple: Logistic Regression
+### Track A Pipeline (Current Focus)
 
-```python
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
-
-model = Pipeline([
-    ('scaler', StandardScaler()),
-    ('clf', LogisticRegression(
-        C=1.0,
-        class_weight='balanced',  # Critical for imbalanced data
-        max_iter=1000,
-        random_state=42
-    ))
-])
+```
+Pre-computed embeddings (785 samples × 100 dims)
+  + Ludo's corrected metadata (patient_id, country, label, allergen_class)
+  → StratifiedGroupKFold (groups=patient_id)
+  → LogReg baseline (class_weight='balanced')
+  → Metrics: AUROC, AUPRC, F1
+  → LOCO analysis (train on 2 countries, test on 1)
 ```
 
-### Why LogReg First?
+### Track B Pipeline (Future)
 
-1. **Interpretable**: Coefficients show which embedding dimensions matter
-2. **Fast**: Quick iteration
-3. **Baseline**: If LogReg fails, more complex models won't help
-4. **Embedding quality > classifier complexity**
+```
+OTU IDs (2,005 Greengenes IDs)
+  → Greengenes 13_8 reference sequences
+  → ProkBERT (384-dim per OTU)
+  → Sample aggregation (100-dim per sample)
+  → classifier
+```
 
-### Upgrade Path (If Needed)
-
-| Model | When to Try |
-|-------|-------------|
-| Random Forest | If non-linear relationships suspected |
-| SVM (RBF kernel) | If decision boundary is complex |
-| MLP | If deep patterns exist in embeddings |
+Notes:
+- Greengenes tarball under `_reference/` is not tracked; verify or re-download before use.
+- MicrobiomeTransformer pretrained weights may not be available; training may be required.
 
 ---
+
+## Evaluation Strategy
+
+### Core Requirements (Leakage Prevention)
+
+1. **Subject-level splits**: `groups=patient_id` — no patient in both train and test
+2. **Stratified folds**: `StratifiedGroupKFold` — maintain class balance
+3. **Reproducible seeds**: `RANDOM_SEED = 42` for all random operations
+4. **Class imbalance**: `class_weight='balanced'` in classifiers
+
+### Cross-Validation Structure
+
+**Baseline evaluation:** 5-fold StratifiedGroupKFold (outer loop only)
+- Purpose: Estimate generalization performance
+- Groups: `patient_id`
+- Stratify: `label`
+- Fixed hyperparameters (`C=1.0, class_weight='balanced'`) — no tuning needed
+
+**Optional nested CV (only if hyperparameter tuning is needed later):**
+- Inner loop selects hyperparameters on training data only
+- Outer loop evaluates on truly unseen test folds
+- This is the ONLY correct way to both tune and get unbiased estimates
+
+### Secondary Analyses
+
+1. **LOCO (Leave-One-Country-Out):** Train on 2 countries, test on 1
+   - Addresses country confounding (FIN 49% vs RUS 15% allergy rate)
+
+2. **Cumulative horizon analysis:** Evaluate early-life signal using cumulative cutoffs (not disjoint bins)
+   - Horizons: `month <= 3`, `month <= 6`, `month <= 12`, plus "all samples"
+   - Required procedure: filter to horizon, aggregate to 1 row per infant (mean embedding), then run CV/LOCO
+   - Interpretation: earlier horizons support stronger "prediction" framing; later horizons are increasingly confounded by unknown onset timing
+   - Track A horizon sizes (verified, patient-level class balance in parentheses):
+     - `month <= 3`: 45 samples / 44 patients (23 healthy, 21 allergic)
+     - `month <= 6`: 110 samples / 92 patients (51 healthy, 41 allergic)
+     - `month <= 12`: 307 samples / 160 patients (101 healthy, 59 allergic)
+     - all: 785 samples / 212 patients (144 healthy, 68 allergic)
+
+See `docs/specs/04_EVALUATION.md` for implementation details.
+
+---
+
+## Known Limitations (Track A)
+
+- **Onset timing unavailable**: Labels are endpoint outcomes; we cannot guarantee any sample is pre-diagnosis.
+- **Early milk allergy**: Cow’s milk exposure can occur from birth (formula/breast milk), weakening “pure prediction” claims even at very early horizons.
+- **Sparse Russia at ≤3 months**: Too few RUS samples/subjects for meaningful LOCO evaluation at that horizon.
 
 ## Project Structure
 
 ```
 diabimmune/
-├── docs/
-│   ├── MASTER.MD                 # This file
-│   └── specs/                    # Detailed implementation specs
 ├── notebooks/
-│   └── 01_baseline_classifier.ipynb
+│   └── 01_food_allergy_baseline.ipynb  # Track A baseline (to be created)
 ├── scripts/
-│   └── prepare_data.py           # Rebuilds processed data deterministically
-├── data/                         # Small, local, reproducible
-│   ├── README.md                 # Provenance documentation
-│   ├── raw/
-│   │   ├── DIABIMMUNE_Karelia_metadata.RData  # Ground-truth metadata (687 KB)
-│   │   └── sra_runinfo.csv                    # SRA metadata bridge (785 rows)
+│   └── prepare_16s_dataset.py          # Track B dataset prep
+├── data/
+│   ├── raw/                            # Source of truth (RData, OTU table)
 │   └── processed/
-│       ├── srs_to_subject_mapping.csv  # ID mapping
-│       ├── unified_samples.csv         # Primary sample table (785 rows)
-│       └── microbiome_embeddings_100d.h5  # Canonical embeddings (785 keys)
-├── results/                      # Evaluation outputs (gitignored)
-│   └── ...
-├── pyproject.toml                # Dependencies (uv)
-├── .gitignore
-├── LICENSE
-└── README.md
+│       ├── longitudinal_wgs_subset/    # Track A: Ludo's corrected Month_*.csv
+│       ├── hf_legacy/                  # Track A: HF embeddings (100d H5)
+│       └── 16s/                        # Track B: 16S OTU artifacts
+├── _reference/                         # Untracked reference data
+│   ├── greengenes/                     # Greengenes 13_8 tarball
+│   └── Microbiome-Modelling/           # Reference model code
+├── docs/
+│   ├── MASTER.MD                       # This file
+│   ├── data/                           # Data documentation
+│   └── specs/                          # Technical specifications
+├── pyproject.toml
+└── uv.lock
 ```
 
 ---
 
-## Minimum Viable Notebook
+## Provenance References
 
-| Step | Task | Status |
-|------|------|--------|
-| 1 | **Prepare data** | ✅ Done (`scripts/prepare_data.py`) |
-| 2 | **Load unified samples** | ✅ Done (`data/processed/unified_samples.csv`) |
-| 3 | **Load canonical embeddings** | ✅ Done (`data/processed/microbiome_embeddings_100d.h5`) |
-| 4 | **Run evaluation** | `StratifiedGroupKFold` + LogReg |
-| 5 | **Visualize** | AUROC per age bin, confusion matrices |
-| 6 | **Document** | What worked, limitations |
+**Primary data portal:**
+- DIABIMMUNE Three‑Country Cohort: https://diabimmune.broadinstitute.org/diabimmune/three-country-cohort
+- 16S sequence data: https://diabimmune.broadinstitute.org/diabimmune/three-country-cohort/resources/16s-sequence-data
 
----
+**Track A data (HF embeddings):**
+- HuggingFace dataset: https://huggingface.co/datasets/hugging-science/AI4FA-Diabimmune
+- Ludo's preprocessing branch: https://github.com/AI-For-Food-Allergies/gut_microbiome_project/tree/diab-preprocessing
 
-## Known Gotchas
+**Embedding pipeline references (Track B):**
+- MicrobiomeTransformer: https://github.com/the-puzzler/Microbiome-Modelling
+- ProkBERT: https://huggingface.co/neuralbioinfo/prokbert-mini-long
 
-| Issue | Impact | Mitigation |
-|-------|--------|------------|
-| **HuggingFace Month_N ≠ collection month** | Wrong analysis | Use `unified_samples.csv` |
-| **Label includes environmental allergies** | Broader than "food allergy" | Document clearly |
-| Missing `subject_id` in HF CSVs | Data leakage | Use mapping file |
-| Class imbalance (42/58) | Biased predictions | `class_weight='balanced'` |
-| Variable samples per subject | Subjects with many samples dominate | Train with per-subject weights and report subject-level metrics |
-| Time leakage | Inflated performance when using future samples | If predicting “by month m”, only use samples with `collection_month <= m` |
-| Small-month instability | Some months have too few subjects per class | Use dynamic `n_splits` and skip months with `n_splits < 2` |
-| Country confounding | Model may learn country effects | Add leave-one-country-out evaluation |
-
----
-
-## Data Files Summary
-
-| File | Rows | Description |
-|------|------|-------------|
-| `data/processed/unified_samples.csv` | 785 | Primary dataset |
-| `data/processed/srs_to_subject_mapping.csv` | 785 | ID mapping |
-| `data/processed/microbiome_embeddings_100d.h5` | 785 keys | Canonical 100-dim embeddings (one per SRS) |
-| `data/processed/dataset_manifest.json` | 1 | Provenance + checksums + counts |
-| `data/raw/sra_runinfo.csv` | 785 | SRA metadata for ID mapping |
-| `data/raw/DIABIMMUNE_Karelia_metadata.RData` | 1,946 | Full subject metadata |
-
----
-
-## Loading Data (Example)
-
-```python
-import pandas as pd
-import h5py
-import numpy as np
-from pathlib import Path
-
-# Load unified samples with TRUE collection months
-samples = pd.read_csv("data/processed/unified_samples.csv")
-
-# Load canonical embeddings (one vector per SRS sample)
-embed_path = Path("data/processed/microbiome_embeddings_100d.h5")
-with h5py.File(embed_path, 'r') as f:
-    embeddings = {srs: np.array(f[srs]) for srs in f.keys()}
-
-# Build feature matrix
-X = np.array([embeddings[srs] for srs in samples['srs_id']])
-y = samples['label'].values
-groups = samples['subject_id'].values
-```
-
----
-
-## References
-
-### Primary Data
-- [DIABIMMUNE Project](https://diabimmune.broadinstitute.org/diabimmune/)
-- [HuggingFace Dataset](https://huggingface.co/datasets/hugging-science/AI4FA-Diabimmune)
-- [BioProject PRJNA290380](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA290380)
-
-### Key Papers
-- Vatanen et al. 2016 - [Cell](https://doi.org/10.1016/j.cell.2016.04.007) - Original DIABIMMUNE paper
-- Metwally et al. 2019 - [PLOS Comp Bio](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1006693) - LSTM for allergy prediction
-
-### Model
-- [Microbiome World Model Blog](https://the-puzzler.github.io/post.html?p=posts/micro-modelling/micro-modelling.html)
-- [AI-For-Food-Allergies/gut_microbiome_project](https://github.com/AI-For-Food-Allergies/gut_microbiome_project)
-
-### Related Work
-- [De Filippis et al. 2021](https://www.nature.com/articles/s41467-021-26266-z) - Gut microbiome signatures in pediatric allergy
-- [Zhang et al. 2022](https://pmc.ncbi.nlm.nih.gov/articles/PMC9463091/) - Multi-scale study of oral/gut environments in peanut allergy
+**Documentation:**
+- `docs/data/SOURCE_REGISTRY.md` — full provenance registry
+- `docs/specs/04_EVALUATION.md` — evaluation strategy
+- `docs/specs/10_EMBEDDINGS_PIPELINE.md` — Track B embedding generation

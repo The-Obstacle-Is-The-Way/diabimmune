@@ -10,14 +10,25 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
-        args: ["--maxkb=1000"]
+        args: ["--maxkb=20000"]
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.0
+  - repo: local
     hooks:
       - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+        name: ruff (uv)
+        entry: uv run ruff check --fix --exit-non-zero-on-fix
+        language: system
+        types: [python]
       - id: ruff-format
+        name: ruff format (uv)
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: mypy
+        name: mypy (uv)
+        entry: uv run mypy scripts
+        language: system
+        pass_filenames: false
 
   - repo: https://github.com/kynan/nbstripout
     rev: 0.6.1

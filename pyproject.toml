@@ -1,7 +1,7 @@
 [project]
 name = "diabimmune"
 version = "0.1.0"
-description = "Allergy/atopy classifier using DIABIMMUNE microbiome embeddings"
+description = "Food allergy classifier using DIABIMMUNE 16S gut microbiome data"
 requires-python = ">=3.12"
 dependencies = [
   "h5py>=3.10",
@@ -16,12 +16,15 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  "ipykernel>=6.29",
+  "jupyterlab>=4.1",
   "mypy>=1.8",
   "nbmake>=1.5",
   "nbqa>=1.7",
   "nbstripout>=0.6",
   "pandas-stubs>=2.2",
   "pre-commit>=3.7",
+  "pytest>=8.0",
   "ruff>=0.4",
 ]
 
@@ -53,4 +56,3 @@ show_column_numbers = true
 [[tool.mypy.overrides]]
 module = ["h5py.*", "huggingface_hub.*", "pyreadr.*"]
 ignore_missing_imports = true
-

@@ -1,331 +1,454 @@
 # 03: Notebook Structure
 
-## Overview
+## Goal
 
-Define the exact structure of `notebooks/01_baseline_classifier.ipynb`.
+Define a minimal, reproducible baseline notebook that:
+- loads Track A data (HF embeddings + Ludo's corrected metadata),
+- trains LogReg with fixed hyperparameters,
+- evaluates with StratifiedGroupKFold (no subject leakage),
+- runs **cumulative horizon analyses** (≤3, ≤6, ≤12 months) using only samples collected up to that horizon,
+- runs LOCO analysis (country confounding check),
+- is structured to support future hyperparameter tuning without restructuring.
 
-Key principle: the notebook consumes **prepared, validated** artifacts created by `scripts/prepare_data.py`:
+Notebook file: `notebooks/01_food_allergy_baseline.ipynb`
 
-- `data/processed/unified_samples.csv` (ground-truth sample table; includes `subject_id` and true `collection_month`)
-- `data/processed/microbiome_embeddings_100d.h5` (one 100-d embedding per `srs_id`)
-
-This keeps training/evaluation reproducible and avoids re-deriving IDs or labels inside the notebook.
+Scientific hypotheses and the horizon set are defined in `docs/specs/00_HYPOTHESIS.md`.
 
 ---
 
-## Notebook Principles
+## Notebook TDD: Assertion-Driven Development
 
-1. **Runs top-to-bottom** without edits
-2. **No network required** for training/eval
-3. **No leakage**: all evaluation is subject-level
-4. **Time-aware**: avoid using samples collected after the prediction horizon
-5. **Minimal + robust**: one baseline model, strong validation
+Traditional “tests-first” TDD does not map cleanly onto notebooks. For this project, the notebook itself is the primary runnable artifact, so we treat **inline assertions** as the notebook’s “tests”.
+
+Requirements:
+- Keep the notebook **self-contained** (no project-specific helper modules required).
+- Put **configurable paths** and constants at the top.
+- Use only standard scientific Python packages (`numpy`, `pandas`, `h5py`, `scikit-learn`, `pathlib`).
+- Add `assert` checks at every critical step (shape, key alignment, no duplicates, label consistency, etc.).
+- The notebook must run **top-to-bottom without edits**; if an invariant breaks, it should fail fast with a clear assertion message.
+
+Transplantability target:
+- Copy `notebooks/01_food_allergy_baseline.ipynb`
+- Copy `data/processed/longitudinal_wgs_subset/`
+- Copy `data/processed/hf_legacy/microbiome_embeddings_100d.h5`
+
+That bundle should be sufficient to reproduce the baseline run on another machine with the same Python deps installed.
+
+## Inputs
+
+### Track A (Current Focus)
+
+**Metadata:**
+- `data/processed/longitudinal_wgs_subset/Month_*.csv`
+- Columns: `sid, patient_id, country, label, allergen_class`
+
+**Embeddings:**
+- `data/processed/hf_legacy/microbiome_embeddings_100d.h5`
+- Keys: SRS IDs (e.g., `SRS1719259`)
+- Values: 100-dim float32 vectors
+
+**Join key:** `sid` in CSVs = keys in H5 file
 
 ---
 
 ## Notebook Outline
 
 ```
-01_baseline_classifier.ipynb
-├── 0. Setup & Configuration
-├── 1. Load Prepared Data
-├── 2. Build Time-Aware Subject Tables
-├── 3. Logistic Regression + CV (StratifiedGroupKFold)
-├── 4. Country Generalization (Leave-One-Country-Out)
-├── 5. Visualizations + Exports
-└── 6. Reproducibility Footer
+0. Setup & Configuration
+1. Load Data
+2. Integrity Checks
+3. ANALYSIS 1–4: CV across horizons (≤3mo, ≤6mo, ≤12mo, all)
+4. LOCO Analysis (per viable horizon)
+5. Results Summary & Export
+6. Known Limitations (REQUIRED)
+7. Interpretation Guide (REQUIRED)
+8. Reproducibility Footer
 ```
 
 ---
 
 ## Cell-by-Cell Specification
 
-### 0. Setup & Configuration
+### 0) Setup & Configuration
 
-**Cell 0.1: Imports** (Code)
 ```python
-from __future__ import annotations
-
-from dataclasses import dataclass
 from pathlib import Path
 
-import h5py
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import sklearn
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import StratifiedGroupKFold
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-```
+import sys
+from IPython.display import display
 
-**Cell 0.2: Paths + config** (Code)
-```python
-PROJECT_ROOT = Path.cwd().parent  # notebook lives in notebooks/
+# Configuration
+RANDOM_SEED = 42
+N_SPLITS_OUTER = 5
+HORIZONS = [None, 3, 6, 12]  # None = all samples (association baseline)
 
-SAMPLES_CSV = PROJECT_ROOT / "data" / "processed" / "unified_samples.csv"
-EMBED_H5 = PROJECT_ROOT / "data" / "processed" / "microbiome_embeddings_100d.h5"
-RESULTS_DIR = PROJECT_ROOT / "results"
+# Horizon label formatting (use consistent format throughout)
+def horizon_label(m):
+    return "all" if m is None else f"≤{m}mo"
+
+# Paths
+# Note: `jupyter nbconvert --execute` runs with cwd set to the notebook's directory,
+# so auto-detect the repo root by searching for `data/processed/`.
+def find_repo_root(start: Path) -> Path:
+    for p in [start] + list(start.parents):
+        if (p / "data" / "processed").exists():
+            return p
+    raise FileNotFoundError(
+        f"Could not find repo root from {start.resolve()} (expected data/processed/)"
+    )
+
+REPO_ROOT = find_repo_root(Path.cwd())
+METADATA_DIR = REPO_ROOT / "data" / "processed" / "longitudinal_wgs_subset"
+EMBEDDINGS_PATH = REPO_ROOT / "data" / "processed" / "hf_legacy" / "microbiome_embeddings_100d.h5"
+# Results go to `notebooks/results/` (alongside the notebook) for transplantability.
+# Note: nbconvert executes notebooks with cwd set to the notebook's directory.
+RESULTS_DIR = Path("results")
 RESULTS_DIR.mkdir(exist_ok=True)
 
-RANDOM_SEED = 42
-N_SPLITS_MAX = 5
-TIME_HORIZONS_MONTHS = [1, 3, 6, 12, 18, 24]
+# Set seeds for reproducibility
+np.random.seed(RANDOM_SEED)
 
-for p in [SAMPLES_CSV, EMBED_H5]:
-    if not p.exists():
-        raise FileNotFoundError(f"Missing {p}. Run: python scripts/prepare_data.py (repo root).")
-
-print("Python:", __import__("platform").python_version())
-print("NumPy:", np.__version__)
-print("Pandas:", pd.__version__)
-print("scikit-learn:", sklearn.__version__)
+# Print versions
+print(f"Python: {sys.version}")
+print(f"NumPy: {np.__version__}")
+print(f"pandas: {pd.__version__}")
+print(f"scikit-learn: {sklearn.__version__}")
+print(f"Random seed: {RANDOM_SEED}")
 ```
 
-**Cell 0.3: Outcome definition** (Markdown)
+### 1) Load Data
+
+```python
+import h5py
+import pandas as pd
+from pathlib import Path
+
+# Load all Month CSVs
+dfs = []
+for csv_path in sorted(METADATA_DIR.glob("Month_*.csv")):
+    month = int(csv_path.stem.split("_")[1])
+    df = pd.read_csv(csv_path)
+    df["month"] = month
+    dfs.append(df)
+metadata = pd.concat(dfs, ignore_index=True)
+
+# Load embeddings
+embeddings_dict = {}
+with h5py.File(EMBEDDINGS_PATH, "r") as f:
+    for key in f.keys():
+        embeddings_dict[key] = f[key][:]
+
+# Merge
+metadata["embedding"] = metadata["sid"].map(embeddings_dict)
+df = metadata.dropna(subset=["embedding"])  # Should be 0 drops if aligned
+
+# Extract arrays
+X = np.stack(df["embedding"].values)
+y = df["label"].values
+patient_ids = df["patient_id"].values
+countries = df["country"].values
+```
+
+### 2) Integrity Checks
+
+```python
+# Counts
+print(f"Samples: {len(df)}")
+print(f"Unique patients: {df['patient_id'].nunique()}")
+print(f"Label distribution: {df['label'].value_counts().to_dict()}")
+print(f"Country distribution: {df['country'].value_counts().to_dict()}")
+
+# Assertions
+assert X.shape == (785, 100), f"Expected (785, 100), got {X.shape}"
+assert len(y) == 785
+assert df["patient_id"].nunique() == 212
+
+# Check: each sample in exactly one month
+assert df["sid"].duplicated().sum() == 0, "Duplicate SRS IDs found!"
+
+# Check: labels consistent per patient
+labels_per_patient = df.groupby("patient_id")["label"].nunique()
+assert (labels_per_patient == 1).all(), "Inconsistent labels within patient!"
+
+# Horizon sanity checks (Track A; month derived from file name)
+def horizon_counts(m: int):
+    d = df[df["month"] <= m]
+    return len(d), d["patient_id"].nunique(), d["label"].value_counts().to_dict(), d["country"].value_counts().to_dict()
+
+print("Horizon counts:")
+for m in [3, 6, 12]:
+    n_samp, n_pat, labels, countries_m = horizon_counts(m)
+    print(f"  month<={m}: samples={n_samp}, patients={n_pat}, labels={labels}, countries={countries_m}")
+
+assert horizon_counts(3)[0] == 45
+assert horizon_counts(6)[0] == 110
+assert horizon_counts(12)[0] == 307
+```
+
+### 3) ANALYSES 1–4: Association Baseline + Cumulative Horizons (Subject-Level)
+
+```python
+from sklearn.model_selection import StratifiedGroupKFold
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import roc_auc_score, average_precision_score, f1_score
+
+outer_cv = StratifiedGroupKFold(n_splits=N_SPLITS_OUTER, shuffle=True, random_state=RANDOM_SEED)
+
+def mean_embedding(vectors: pd.Series) -> np.ndarray:
+    return np.mean(np.stack(vectors.to_list(), axis=0), axis=0)
+
+def build_subject_table(samples_df: pd.DataFrame) -> pd.DataFrame:
+    subj = samples_df.groupby("patient_id").agg(
+        label=("label", "first"),
+        country=("country", "first"),
+        n_samples=("sid", "count"),
+    )
+    subj["embedding"] = samples_df.groupby("patient_id")["embedding"].apply(mean_embedding)
+    return subj.reset_index()
+
+def run_cv(subj_df: pd.DataFrame, horizon_label: str) -> list[dict]:
+    X_subj = np.stack(subj_df["embedding"].to_list())
+    y_subj = subj_df["label"].to_numpy()
+    groups = subj_df["patient_id"].to_numpy()
+
+    fold_rows = []
+    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X_subj, y_subj, groups=groups)):
+        X_train, X_test = X_subj[train_idx], X_subj[test_idx]
+        y_train, y_test = y_subj[train_idx], y_subj[test_idx]
+
+        model = Pipeline([
+            ('scaler', StandardScaler()),
+            ('clf', LogisticRegression(
+                C=1.0,
+                class_weight='balanced',
+                solver='lbfgs',
+                max_iter=2000,
+                random_state=RANDOM_SEED
+            ))
+        ])
+
+        model.fit(X_train, y_train)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        y_pred = (y_pred_proba >= 0.5).astype(int)
+
+        fold_rows.append({
+            'horizon': horizon_label,
+            'fold': fold_idx,
+            'n_train_subjects': len(y_train),
+            'n_test_subjects': len(y_test),
+            'auroc': roc_auc_score(y_test, y_pred_proba),
+            'auprc': average_precision_score(y_test, y_pred_proba),
+            'f1': f1_score(y_test, y_pred),
+        })
+    return fold_rows
+
+cv_results = []
+
+for m in HORIZONS:
+    if m is None:
+        horizon_label = "all"
+        df_h = df.copy()
+    else:
+        horizon_label = f"≤{m}mo"
+        df_h = df[df["month"] <= m].copy()
+
+    subj = build_subject_table(df_h)
+    cv_results.extend(run_cv(subj, horizon_label=horizon_label))
+
+cv_df = pd.DataFrame(cv_results)
+print(cv_df)
+
+# Summary by horizon (mean ± std across folds)
+summary_rows = []
+for horizon_label, g in cv_df.groupby("horizon"):
+    summary_rows.append({
+        "horizon": horizon_label,
+        "auroc_mean": g["auroc"].mean(),
+        "auroc_std": g["auroc"].std(),
+        "auprc_mean": g["auprc"].mean(),
+        "auprc_std": g["auprc"].std(),
+        "f1_mean": g["f1"].mean(),
+        "f1_std": g["f1"].std(),
+    })
+summary_df = pd.DataFrame(summary_rows)
+
+print("\n" + "="*60)
+print("SUMMARY (mean ± std across folds)")
+print("="*60)
+display(summary_df)
+```
+
+### 4) LOCO: Leave-One-Country-Out (Per Horizon, Where Meaningful)
+
+```python
+loco_results = []
+
+for m in HORIZONS:
+    if m is None:
+        horizon_label = "all"
+        df_h = df.copy()
+    else:
+        horizon_label = f"≤{m}mo"
+        df_h = df[df["month"] <= m].copy()
+
+    subj = build_subject_table(df_h)
+    X_subj = np.stack(subj["embedding"].to_list())
+    y_subj = subj["label"].to_numpy()
+    countries_subj = subj["country"].to_numpy()
+
+    for held_out in ['FIN', 'EST', 'RUS']:
+        train_mask = countries_subj != held_out
+        test_mask = countries_subj == held_out
+
+        y_test = y_subj[test_mask]
+        # AUROC is undefined if held-out set has only one class
+        if len(set(y_test)) < 2:
+            continue
+
+        X_train, y_train = X_subj[train_mask], y_subj[train_mask]
+        X_test = X_subj[test_mask]
+
+        model = Pipeline([
+            ('scaler', StandardScaler()),
+            ('clf', LogisticRegression(
+                C=1.0,
+                class_weight='balanced',
+                solver='lbfgs',
+                max_iter=2000,
+                random_state=RANDOM_SEED
+            ))
+        ])
+
+        model.fit(X_train, y_train)
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+
+        loco_results.append({
+            'horizon': horizon_label,
+            'held_out': held_out,
+            'n_train_subjects': len(y_train),
+            'n_test_subjects': len(y_test),
+            'auroc': roc_auc_score(y_test, y_pred_proba),
+            'auprc': average_precision_score(y_test, y_pred_proba)
+        })
+
+loco_df = pd.DataFrame(loco_results)
+print("\n" + "="*60)
+print("LOCO RESULTS (Leave-One-Country-Out)")
+print("="*60)
+display(loco_df)
+```
+
+### 5) Results Summary & Export
+
+```python
+# Save results
+cv_df.to_csv(RESULTS_DIR / "cv_metrics.csv", index=False)
+loco_df.to_csv(RESULTS_DIR / "loco_metrics.csv", index=False)
+summary_df.to_csv(RESULTS_DIR / "cv_summary.csv", index=False)
+
+print("Results saved to results/")
+```
+
+### 6) Known Limitations (REQUIRED Markdown Cell)
+
+This cell MUST be present to ensure scientific transparency. Include:
+
 ```markdown
-**Baseline outcome (`label`)**: `1` if **any** `allergy_*` is true **or** `totalige_high` is true (from the RData ground truth; matches HuggingFace label).  
-This is broader than “food allergy only”.
+## Known Limitations
+
+**Onset timing is unknown.** The label is an *endpoint outcome* (eventual food allergy status), not a diagnosis at the time of sample collection. Any horizon may include post-onset samples for some infants.
+
+**Milk allergy can manifest very early.** Infants exposed to cow's milk protein via formula or breast milk can develop milk allergy in the first weeks of life. This weakens "pure prediction" claims even at ≤3 months.
+
+**Claim strength is a gradient, not a boundary:**
+- **≤3 months**: Strongest predictive framing (but still limited)
+- **≤6 months**: Moderate predictive framing
+- **≤12 months**: Mixed predictive/associative
+- **All samples**: Association only (includes post-onset samples)
+
+**Country confounding.** Allergy prevalence differs by country (FIN 49%, EST 38%, RUS 15%). LOCO analysis helps assess whether the model learns transferable microbiome signal vs country-specific batch effects.
+
+**Russia at ≤3 months.** Only 3 RUS patients at this horizon; LOCO results for RUS are not meaningful.
+```
+
+### 7) Interpretation Guide (REQUIRED Markdown Cell)
+
+Help readers understand what the numbers mean:
+
+```markdown
+## Interpretation Guide
+
+**AUROC interpretation:**
+- 0.50 = random chance (no signal)
+- 0.55–0.65 = weak signal
+- 0.65–0.75 = moderate signal
+- 0.75+ = strong signal
+
+**LOCO interpretation:**
+- If LOCO AUROC ≈ CV AUROC: Model learns transferable microbiome patterns
+- If LOCO AUROC << CV AUROC: Model may be exploiting country-specific effects
+- If LOCO AUROC < 0.50: Model fails to generalize to held-out country
+
+**What to look for:**
+1. Does AUROC decrease as horizon decreases? (Expected: less data = noisier estimates)
+2. Is ≤3mo AUROC still above chance? (Key question for "early prediction" claim)
+3. Do LOCO results hold up? (Country confounding check)
+```
+
+### 8) Reproducibility Footer
+
+```python
+from datetime import datetime
+
+print("=" * 50)
+print("REPRODUCIBILITY INFO")
+print("=" * 50)
+print(f"Random seed: {RANDOM_SEED}")
+print(f"Outer CV splits: {N_SPLITS_OUTER}")
+print(f"Python: {sys.version}")
+print(f"NumPy: {np.__version__}")
+print(f"pandas: {pd.__version__}")
+print(f"scikit-learn: {sklearn.__version__}")
+print(f"Run completed: {datetime.now().isoformat()}")
 ```
 
 ---
 
-### 1. Load Prepared Data
+## Optional: Nested CV for Hyperparameter Tuning
 
-**Cell 1.1: Load sample table** (Code)
+**This is OPTIONAL. The baseline does NOT need this.**
+
+If you later want to tune hyperparameters, use nested CV (inner loop inside outer loop). This is the only correct way to both tune and get unbiased performance estimates.
+
 ```python
-samples = pd.read_csv(SAMPLES_CSV)
+from sklearn.model_selection import GridSearchCV
 
-assert len(samples) == 785
-assert samples["srs_id"].is_unique
-assert samples["subject_id"].nunique() == 212
-assert set(samples["label"].unique()) <= {0, 1}
+# Inside outer loop, on X_train, y_train:
+inner_cv = StratifiedGroupKFold(n_splits=3, shuffle=True, random_state=RANDOM_SEED)
+groups_train = patient_ids[train_idx]
 
-samples.head()
+param_grid = {'clf__C': [0.01, 0.1, 1.0, 10.0]}
+
+grid_search = GridSearchCV(model, param_grid, cv=inner_cv, scoring='roc_auc')
+grid_search.fit(X_train, y_train, groups=groups_train)  # groups= is CRITICAL
+
+# Evaluate on outer test fold
+y_pred_proba = grid_search.predict_proba(X_test)[:, 1]
 ```
 
-**Cell 1.2: Load embeddings into `X`** (Code)
-```python
-def load_embeddings_for_samples(samples_df: pd.DataFrame, h5_path: Path) -> np.ndarray:
-    srs_list = samples_df["srs_id"].tolist()
-    X = np.empty((len(srs_list), 100), dtype=np.float32)
-
-    with h5py.File(h5_path, "r") as f:
-        for i, srs in enumerate(srs_list):
-            X[i] = np.asarray(f[srs], dtype=np.float32)
-
-    return X
-
-
-X = load_embeddings_for_samples(samples, EMBED_H5)
-y = samples["label"].to_numpy(dtype=np.int64)
-groups = samples["subject_id"].to_numpy(dtype=str)
-
-print("X:", X.shape, X.dtype)
-```
+See `docs/specs/04_EVALUATION.md` for detailed explanation of nested CV.
 
 ---
 
-### 2. Build Time-Aware Subject Tables (Avoid Time Leakage)
+## Reproducibility Requirements
 
-This notebook evaluates “predict by month *m*” by aggregating *all* samples with `collection_month <= m` into **one row per subject**.
-
-**Cell 2.1: Subject table builder** (Code)
-```python
-def build_subject_table(
-    samples_df: pd.DataFrame,
-    X_samples: np.ndarray,
-    horizon_month: int,
-    aggregation: str = "mean",  # "mean" or "last"
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, pd.DataFrame]:
-    if aggregation not in {"mean", "last"}:
-        raise ValueError("aggregation must be 'mean' or 'last'")
-
-    mask = samples_df["collection_month"].astype(int) <= int(horizon_month)
-    df = samples_df.loc[mask].copy()
-    X = X_samples[mask.to_numpy()]
-    df["_x_row"] = np.arange(len(df))
-
-    df = df.sort_values(["subject_id", "collection_month", "_x_row"], kind="mergesort")
-
-    rows: list[dict[str, object]] = []
-    feats: list[np.ndarray] = []
-
-    for subject_id, g in df.groupby("subject_id", sort=False):
-        Xg = X[g["_x_row"].to_numpy()]
-
-        feat = Xg.mean(axis=0) if aggregation == "mean" else Xg[-1]
-        feats.append(feat.astype(np.float32))
-
-        rows.append(
-            {
-                "subject_id": subject_id,
-                "label": int(g["label"].iloc[0]),
-                "country": g["country"].iloc[0],
-                "n_samples_upto_horizon": int(len(g)),
-                "max_month": int(g["collection_month"].max()),
-            }
-        )
-
-    subj = pd.DataFrame(rows)
-    X_subj = np.stack(feats)
-    y_subj = subj["label"].to_numpy(dtype=np.int64)
-    groups_subj = subj["subject_id"].to_numpy(dtype=str)
-
-    return X_subj, y_subj, groups_subj, subj
-```
-
----
-
-### 3. Logistic Regression + CV (StratifiedGroupKFold)
-
-**Cell 3.1: Model factory** (Code)
-```python
-def make_model() -> Pipeline:
-    # liblinear is deterministic for this binary classification baseline
-    clf = LogisticRegression(
-        solver="liblinear",
-        penalty="l2",
-        C=1.0,
-        max_iter=2000,
-    )
-    return Pipeline(
-        [
-            ("scaler", StandardScaler()),
-            ("clf", clf),
-        ]
-    )
-```
-
-**Cell 3.2: Dynamic `n_splits`** (Code)
-```python
-def make_cv(y_subj: np.ndarray, n_splits_max: int, random_seed: int) -> StratifiedGroupKFold:
-    n_pos = int((y_subj == 1).sum())
-    n_neg = int((y_subj == 0).sum())
-    n_splits = min(n_splits_max, n_pos, n_neg)
-    if n_splits < 2:
-        raise ValueError(f"Not enough subjects per class for CV: pos={n_pos} neg={n_neg}")
-    return StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
-```
-
-**Cell 3.3: Evaluate horizons** (Code)
-```python
-@dataclass(frozen=True)
-class FoldResult:
-    horizon_month: int
-    fold: int
-    auroc: float
-
-
-def evaluate_horizon(horizon_month: int, aggregation: str = "mean") -> list[FoldResult]:
-    X_subj, y_subj, groups_subj, _ = build_subject_table(samples, X, horizon_month, aggregation=aggregation)
-    cv = make_cv(y_subj, N_SPLITS_MAX, RANDOM_SEED)
-
-    out: list[FoldResult] = []
-    for fold, (tr, te) in enumerate(cv.split(X_subj, y_subj, groups=groups_subj)):
-        model = make_model()
-        model.fit(X_subj[tr], y_subj[tr])
-        prob = model.predict_proba(X_subj[te])[:, 1]
-        out.append(FoldResult(horizon_month, fold, float(roc_auc_score(y_subj[te], prob))))
-
-    return out
-
-
-all_results: list[FoldResult] = []
-for m in TIME_HORIZONS_MONTHS:
-    try:
-        all_results.extend(evaluate_horizon(m, aggregation="mean"))
-    except ValueError as e:
-        print(f"Skipping horizon={m}: {e}")
-
-results_df = pd.DataFrame([r.__dict__ for r in all_results])
-results_df.groupby("horizon_month")["auroc"].agg(["mean", "std", "count"]).reset_index()
-```
-
----
-
-### 4. Country Generalization (Leave-One-Country-Out)
-
-**Cell 4.1: LOCO evaluation** (Code)
-```python
-def evaluate_leave_one_country_out(horizon_month: int, aggregation: str = "mean") -> pd.DataFrame:
-    X_subj, y_subj, _, subj = build_subject_table(samples, X, horizon_month, aggregation=aggregation)
-
-    rows: list[dict[str, object]] = []
-    for held_out in sorted(subj["country"].unique()):
-        train_mask = subj["country"] != held_out
-        test_mask = subj["country"] == held_out
-
-        # Require both classes in train/test
-        if len(set(y_subj[train_mask.to_numpy()])) < 2:
-            continue
-        if len(set(y_subj[test_mask.to_numpy()])) < 2:
-            continue
-
-        model = make_model()
-        model.fit(X_subj[train_mask.to_numpy()], y_subj[train_mask.to_numpy()])
-        prob = model.predict_proba(X_subj[test_mask.to_numpy()])[:, 1]
-
-        rows.append(
-            {
-                "horizon_month": horizon_month,
-                "held_out_country": held_out,
-                "n_test_subjects": int(test_mask.sum()),
-                "auroc": float(roc_auc_score(y_subj[test_mask.to_numpy()], prob)),
-            }
-        )
-
-    return pd.DataFrame(rows)
-
-
-evaluate_leave_one_country_out(horizon_month=12)
-```
-
----
-
-### 5. Visualizations + Exports
-
-**Cell 5.1: AUROC vs horizon** (Code)
-```python
-summary = results_df.groupby("horizon_month")["auroc"].agg(["mean", "std"]).reset_index()
-
-fig, ax = plt.subplots(figsize=(7, 4))
-ax.errorbar(summary["horizon_month"], summary["mean"], yerr=summary["std"], marker="o", capsize=4)
-ax.axhline(0.5, color="black", linestyle="--", linewidth=1)
-ax.set_xlabel("Prediction horizon (month)")
-ax.set_ylabel("Subject-level AUROC")
-ax.set_title("DIABIMMUNE baseline (LogReg on 100-d embeddings)")
-ax.grid(alpha=0.3)
-fig.savefig(RESULTS_DIR / "auroc_by_horizon.png", dpi=150, bbox_inches="tight")
-```
-
-**Cell 5.2: Save results tables** (Code)
-```python
-results_df.to_csv(RESULTS_DIR / "cv_results_by_horizon.csv", index=False)
-summary.to_csv(RESULTS_DIR / "cv_summary_by_horizon.csv", index=False)
-```
-
----
-
-### 6. Reproducibility Footer
-
-**Cell 6.1: Record runtime metadata** (Code)
-```python
-import json
-import platform
-
-payload = {
-    "random_seed": RANDOM_SEED,
-    "n_splits_max": N_SPLITS_MAX,
-    "time_horizons_months": TIME_HORIZONS_MONTHS,
-    "python": platform.python_version(),
-    "numpy": np.__version__,
-    "pandas": pd.__version__,
-    "sklearn": sklearn.__version__,
-}
-
-(RESULTS_DIR / "run_metadata.json").write_text(json.dumps(payload, indent=2) + "\n")
-payload
-```
+- ✅ No network calls inside the notebook
+- ✅ All data from `data/processed/`
+- ✅ All randomness seeded (`RANDOM_SEED = 42`)
+- ✅ Notebook runs top-to-bottom without edits
+- ✅ Version info printed at end
